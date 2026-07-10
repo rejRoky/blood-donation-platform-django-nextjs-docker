@@ -73,7 +73,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-cache@123}
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://localhost:3000}
       - TZ=${TZ:-Asia/Dhaka}
     restart: unless-stopped
     healthcheck:
@@ -98,9 +98,9 @@ services:
     networks:
       - blood_donation_network
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost/api}
       - INTERNAL_API_URL=http://backend:8000
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-nextauth-key-change-in-production}
       - TZ=${TZ:-Asia/Dhaka}
     restart: unless-stopped
@@ -109,8 +109,7 @@ services:
     build: ./nginx
     container_name: blood_donation_nginx
     ports:
-      - "8080:80"
-      - "443:443"
+      - "80:80"
     depends_on:
       - backend
       - frontend
@@ -123,10 +122,11 @@ services:
       - blood_donation_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health/"]
+      test: ["CMD", "curl", "-f", "http://localhost/health/live/"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
 volumes:
   postgres_data:

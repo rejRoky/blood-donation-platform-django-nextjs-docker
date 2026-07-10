@@ -427,12 +427,10 @@ class IsActiveView(APIView):
         return Response({'error': 'Invalid request'}, status=status.HTTP_400_BAD_REQUEST)
 
 
-from datetime import datetime  # Correct import for datetime
-
-
 class UserDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(responses={200: 'Success', 404: 'Not Found'})
     def get(self, request, pk):
         try:
             user = User.objects.get(pk=pk)
@@ -444,6 +442,16 @@ class UserDetailView(APIView):
 
 class SendResetPasswordOtpView(APIView):
 
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
+            },
+            required=['mobile_number'],
+        ),
+        responses={200: 'OTP sent', 404: 'User not found'},
+    )
     def post(self, request):
         mobile_number = request.data.get('mobile_number')
         if not mobile_number:
@@ -452,13 +460,24 @@ class SendResetPasswordOtpView(APIView):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
         otp = str(random.randint(100000, 999999))
-        cache.set(f'reset_otp_{mobile_number}', otp, timeout=300)  # 5 min expiry
-        # In production send OTP via SMS. For now return in response for testing.
+        cache.set(f'reset_otp_{mobile_number}', otp, timeout=300)
+        # TODO: send OTP via SMS in production
         return Response({'message': 'OTP sent successfully', 'otp': otp}, status=status.HTTP_200_OK)
 
 
 class VerifyResetPasswordOtpView(APIView):
 
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
+                'otp': openapi.Schema(type=openapi.TYPE_STRING, description='6-digit OTP received'),
+            },
+            required=['mobile_number', 'otp'],
+        ),
+        responses={200: 'OTP verified', 400: 'Invalid or expired OTP'},
+    )
     def post(self, request):
         mobile_number = request.data.get('mobile_number')
         otp = request.data.get('otp')
@@ -468,10 +487,9 @@ class VerifyResetPasswordOtpView(APIView):
         cached_otp = cache.get(f'reset_otp_{mobile_number}')
         if cached_otp is None:
             return Response({'error': 'OTP expired or not found'}, status=status.HTTP_400_BAD_REQUEST)
-        if cached_otp != otp:
+        if cached_otp != str(otp):
             return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Store verified flag so reset-password can proceed
         cache.set(f'otp_verified_{mobile_number}', True, timeout=300)
         cache.delete(f'reset_otp_{mobile_number}')
         return Response({'message': 'OTP verified successfully'}, status=status.HTTP_200_OK)
@@ -479,6 +497,17 @@ class VerifyResetPasswordOtpView(APIView):
 
 class ResetPasswordView(APIView):
 
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
+                'new_password': openapi.Schema(type=openapi.TYPE_STRING, description='New password (min 8 chars)'),
+            },
+            required=['mobile_number', 'new_password'],
+        ),
+        responses={200: 'Password reset successfully', 400: 'OTP not verified or invalid password'},
+    )
     def post(self, request):
         mobile_number = request.data.get('mobile_number')
         new_password = request.data.get('new_password')
@@ -487,7 +516,7 @@ class ResetPasswordView(APIView):
             return Response({'error': 'Mobile number and new password are required'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not cache.get(f'otp_verified_{mobile_number}'):
-            return Response({'error': 'OTP not verified'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'OTP not verified. Please verify OTP first.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(mobile_number=mobile_number)
@@ -501,9 +530,6 @@ class ResetPasswordView(APIView):
         user.save()
         cache.delete(f'otp_verified_{mobile_number}')
         return Response({'message': 'Password reset successfully'}, status=status.HTTP_200_OK)
-
-
-from datetime import datetime  # kept for DonationView below
 
 
 class DonationView(APIView):

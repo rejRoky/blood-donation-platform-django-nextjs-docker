@@ -8,7 +8,7 @@ const isMultipartFormDataEndpoint = (endpoint) => {
 };
 
 const baseQuery = fetchBaseQuery({
-  baseUrl: "https://blood.rajbilling.com/api",
+  baseUrl: process.env.NEXT_PUBLIC_API_URL + "/api",
   prepareHeaders: async (headers, { getState, endpoint }) => {
     const session = await getSession();
 

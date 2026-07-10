@@ -1,6 +1,8 @@
+import random
 import logging
 
 from django.contrib.auth import authenticate
+from django.core.cache import cache
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -304,9 +306,19 @@ class UserList(APIView):
 
         users = User.objects.all()
 
-        # Apply pagination
+        blood_group = request.query_params.get('blood_group')
+        district_id = request.query_params.get('district_id')
+        upazila_id = request.query_params.get('upazila_id')
+
+        if blood_group:
+            users = users.filter(blood_group=blood_group)
+        if district_id:
+            users = users.filter(address__district_id=district_id)
+        if upazila_id:
+            users = users.filter(address__upazila_id=upazila_id)
+
         paginator = PageNumberPagination()
-        paginator.page_size = 10  # Set your desired page size
+        paginator.page_size = 10
         result_page = paginator.paginate_queryset(users, request)
         serializer = UserSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
@@ -416,6 +428,82 @@ class IsActiveView(APIView):
 
 
 from datetime import datetime  # Correct import for datetime
+
+
+class UserDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = UserSerializer(user)
+        return Response(serializer.data)
+
+
+class SendResetPasswordOtpView(APIView):
+
+    def post(self, request):
+        mobile_number = request.data.get('mobile_number')
+        if not mobile_number:
+            return Response({'error': 'Mobile number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not User.objects.filter(mobile_number=mobile_number).exists():
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        otp = str(random.randint(100000, 999999))
+        cache.set(f'reset_otp_{mobile_number}', otp, timeout=300)  # 5 min expiry
+        # In production send OTP via SMS. For now return in response for testing.
+        return Response({'message': 'OTP sent successfully', 'otp': otp}, status=status.HTTP_200_OK)
+
+
+class VerifyResetPasswordOtpView(APIView):
+
+    def post(self, request):
+        mobile_number = request.data.get('mobile_number')
+        otp = request.data.get('otp')
+        if not mobile_number or not otp:
+            return Response({'error': 'Mobile number and OTP are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cached_otp = cache.get(f'reset_otp_{mobile_number}')
+        if cached_otp is None:
+            return Response({'error': 'OTP expired or not found'}, status=status.HTTP_400_BAD_REQUEST)
+        if cached_otp != otp:
+            return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Store verified flag so reset-password can proceed
+        cache.set(f'otp_verified_{mobile_number}', True, timeout=300)
+        cache.delete(f'reset_otp_{mobile_number}')
+        return Response({'message': 'OTP verified successfully'}, status=status.HTTP_200_OK)
+
+
+class ResetPasswordView(APIView):
+
+    def post(self, request):
+        mobile_number = request.data.get('mobile_number')
+        new_password = request.data.get('new_password')
+
+        if not mobile_number or not new_password:
+            return Response({'error': 'Mobile number and new password are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not cache.get(f'otp_verified_{mobile_number}'):
+            return Response({'error': 'OTP not verified'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(mobile_number=mobile_number)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if len(new_password) < 8:
+            return Response({'error': 'Password must be at least 8 characters'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save()
+        cache.delete(f'otp_verified_{mobile_number}')
+        return Response({'message': 'Password reset successfully'}, status=status.HTTP_200_OK)
+
+
+from datetime import datetime  # kept for DonationView below
 
 
 class DonationView(APIView):

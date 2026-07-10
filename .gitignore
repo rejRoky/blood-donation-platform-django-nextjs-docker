@@ -70,7 +70,7 @@ db.sqlite3
 
 
 ### Migration ###
-000*.py
+# 000*.py
 
 
 ### Frontend (Next.js) ###

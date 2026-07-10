@@ -5,17 +5,18 @@ const areaApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     getDistrict: builder.query({
       query: () => ({
-        url: "/districts/",
+        url: "/area/district/",
         method: "GET",
       }),
     }),
-    getUpozilla: builder.query({
+    getUpozilla: builder.mutation({
       query: (districtId) => ({
-        url: `/districts/${districtId}/upazilas`,
-        method: "GET",
+        url: "/area/upazila/",
+        method: "POST",
+        body: { district_id: districtId },
       }),
     }),
   }),
 });
 
-export const { useGetDistrictQuery, useGetUpozillaQuery } = areaApi;
+export const { useGetDistrictQuery, useGetUpozillaMutation } = areaApi;

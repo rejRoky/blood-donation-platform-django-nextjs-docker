@@ -3,10 +3,21 @@ Production settings for blood donation backend.
 Maximum security and performance optimizations.
 """
 
+from django.core.exceptions import ImproperlyConfigured
+
 from .base import *
 
 # Production mode - DEBUG must be False
 DEBUG = False
+
+# Fail fast on insecure configuration
+if SECRET_KEY == 'INSECURE-CHANGE-ME' or len(SECRET_KEY) < 32:
+    raise ImproperlyConfigured(
+        "SECRET_KEY must be set to a strong unique value in production "
+        "(set the SECRET_KEY environment variable)."
+    )
+if OTP_DEBUG_EXPOSE:
+    raise ImproperlyConfigured("OTP_DEBUG_EXPOSE must be disabled in production.")
 
 # Security Headers - HTTPS enforcement
 SECURE_SSL_REDIRECT = True
@@ -76,9 +87,16 @@ ADMINS = [
 ]
 MANAGERS = ADMINS
 
-# Static files - Use WhiteNoise or CDN
-# STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Static files - WhiteNoise (nginx serves the shared volume; this is the fallback)
+MIDDLEWARE.insert(
+    MIDDLEWARE.index('django.middleware.security.SecurityMiddleware') + 1,
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+)
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
 
 # Increase API rate limits for production if needed
-REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['anon'] = '1000/hour'
-REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['user'] = '10000/hour'
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['anon'] = config('THROTTLE_ANON', default='1000/hour')
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['user'] = config('THROTTLE_USER', default='10000/hour')

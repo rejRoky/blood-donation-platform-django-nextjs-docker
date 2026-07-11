@@ -27,7 +27,7 @@ INSTALLED_APPS = [
     # Third-party apps
     "rest_framework",
     "rest_framework_simplejwt",
-    'rest_framework_simplejwt.token_blacklist',
+    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "drf_yasg",
     "django_redis",
@@ -48,7 +48,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "users.middleware.UserActionLoggerMiddleware",
+    "users.middleware.RequestLogMiddleware",
 ]
 
 ROOT_URLCONF = "project.urls"
@@ -80,7 +80,8 @@ DATABASES = {
         "PASSWORD": config("POSTGRES_PASSWORD", default="postgres"),
         "HOST": config("POSTGRES_HOST", default="db"),
         "PORT": config("POSTGRES_PORT", default="5432"),
-        "CONN_MAX_AGE": 600,  # Connection pooling
+        "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=600, cast=int),
+        "CONN_HEALTH_CHECKS": True,
     }
 }
 
@@ -89,14 +90,21 @@ REDIS_HOST = config('REDIS_HOST', default='redis')
 REDIS_PORT = config('REDIS_PORT', default='6379')
 REDIS_PASSWORD = config('REDIS_PASSWORD', default='')
 
-REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/1" if REDIS_PASSWORD else f"redis://{REDIS_HOST}:{REDIS_PORT}/1"
+REDIS_URL = (
+    f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/1"
+    if REDIS_PASSWORD
+    else f"redis://{REDIS_HOST}:{REDIS_PORT}/1"
+)
 
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": REDIS_URL,
+        "KEY_PREFIX": "bdp",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "SOCKET_CONNECT_TIMEOUT": 5,
+            "SOCKET_TIMEOUT": 5,
         },
     }
 }
@@ -137,8 +145,9 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# CKEditor
-CKEDITOR_UPLOAD_PATH = "uploads/"
+# Upload limits
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
@@ -151,25 +160,39 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # Secure by default: every endpoint requires auth unless it opts out.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+    ],
+    'EXCEPTION_HANDLER': 'project.exceptions.api_exception_handler',
+    'DEFAULT_PAGINATION_CLASS': 'project.pagination.StandardResultsSetPagination',
     'PAGE_SIZE': 10,
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',
-        'user': '1000/hour',
-        'login': '5/minute',
+        'anon': config('THROTTLE_ANON', default='100/hour'),
+        'user': config('THROTTLE_USER', default='1000/hour'),
+        'login': config('THROTTLE_LOGIN', default='10/min'),
+        'register': config('THROTTLE_REGISTER', default='20/hour'),
+        'otp': config('THROTTLE_OTP', default='5/min'),
     },
 }
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),  # Reduced from 3 days to 1 hour
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # Refresh tokens can be longer
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=config('JWT_ACCESS_MINUTES', default=60, cast=int)),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=config('JWT_REFRESH_DAYS', default=7, cast=int)),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': SECRET_KEY,
     'VERIFYING_KEY': None,
@@ -192,6 +215,21 @@ CORS_ALLOW_METHODS = [
     "PUT",
 ]
 
+# OTP / password reset flow
+OTP_LENGTH = config('OTP_LENGTH', default=6, cast=int)
+OTP_TTL_SECONDS = config('OTP_TTL_SECONDS', default=300, cast=int)
+OTP_MAX_VERIFY_ATTEMPTS = config('OTP_MAX_VERIFY_ATTEMPTS', default=5, cast=int)
+RESET_TOKEN_TTL_SECONDS = config('RESET_TOKEN_TTL_SECONDS', default=600, cast=int)
+# Expose the OTP in the send-OTP response. NEVER enable in production —
+# it exists only so the flow can be exercised before an SMS gateway is wired up.
+OTP_DEBUG_EXPOSE = config('OTP_DEBUG_EXPOSE', default=False, cast=bool)
+
+# API documentation toggle (disable on hardened deployments if desired)
+API_DOCS_ENABLED = config('API_DOCS_ENABLED', default=True, cast=bool)
+
+# Application version reported by /health/status/
+APP_VERSION = config('APP_VERSION', default='1.0.0')
+
 # Swagger/OpenAPI Settings
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
@@ -199,7 +237,7 @@ SWAGGER_SETTINGS = {
             'type': 'apiKey',
             'name': 'Authorization',
             'in': 'header',
-            'scheme': 'Bearer',
+            'description': "JWT authorization header. Format: 'Bearer <access_token>'",
         }
     },
     'USE_SESSION_AUTH': False,
@@ -210,12 +248,15 @@ SWAGGER_SETTINGS = {
 }
 
 # Logging Configuration
+LOG_DIR = BASE_DIR / 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'format': '{levelname} {asctime} {name} {module} {process:d} {message}',
             'style': '{',
         },
         'simple': {
@@ -232,7 +273,7 @@ LOGGING = {
         'file': {
             'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'app.log'),
+            'filename': str(LOG_DIR / 'app.log'),
             'maxBytes': 10485760,  # 10MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -240,7 +281,7 @@ LOGGING = {
         'error_file': {
             'level': 'ERROR',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'error.log'),
+            'filename': str(LOG_DIR / 'error.log'),
             'maxBytes': 10485760,  # 10MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -263,6 +304,11 @@ LOGGING = {
             'propagate': False,
         },
         'sitesetting': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'api.requests': {
             'handlers': ['console', 'file'],
             'level': 'INFO',
             'propagate': False,

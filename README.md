@@ -61,7 +61,15 @@ docker compose up --build
 Database migrations are generated and applied automatically by the backend
 container on startup (migration files are intentionally not tracked in git).
 
-### 3. Access
+### 3. Seed Geographic Data (first run)
+```bash
+docker compose exec backend python manage.py seed_areas
+```
+
+Loads the bundled dataset of 64 districts and 494 upazilas (idempotent —
+safe to re-run). Registration and donor search need this data.
+
+### 4. Access
 | Service | URL |
 |---------|-----|
 | App (via nginx) | http://localhost |
@@ -74,7 +82,7 @@ container on startup (migration files are intentionally not tracked in git).
 
 In development, DB/Redis/backend/frontend ports are bound to `127.0.0.1` only.
 
-### 4. Create Superuser (Optional)
+### 5. Create Superuser (Optional)
 ```bash
 docker compose exec backend python manage.py createsuperuser
 ```
@@ -89,11 +97,23 @@ and `project.settings.production` fails fast on an insecure `SECRET_KEY`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose exec backend python manage.py seed_areas   # first deploy
 ```
 
 Static and media files are served by nginx directly from shared volumes
 (WhiteNoise as fallback). Terminate TLS at the nginx container (mount
 certificates) or at an upstream load balancer/CDN.
+
+Deployment notes:
+
+- `ALLOWED_HOSTS` needs your public domain(s) only — internal hostnames
+  (`backend`, `localhost`) are appended automatically for container
+  healthchecks and the Next.js server's internal API calls.
+- `SECURE_SSL_REDIRECT` defaults to `True`; set it to `False` when TLS is
+  terminated upstream of nginx. Health endpoints are always exempt from
+  the redirect so probes keep working.
+- The overlay replaces (not merges) dev bind-mounts and published ports
+  via compose `!override` tags — only nginx's port is exposed.
 
 **SMS gateway:** the OTP flow logs messages until a provider is wired into
 `backend/users/services.py` (`send_sms`). Do not enable `OTP_DEBUG_EXPOSE`
@@ -112,6 +132,8 @@ blood-donation-backend-django/
 │   │   ├── pagination.py         # standard page-number pagination
 │   │   └── health.py             # liveness / readiness probes
 │   ├── users/                    # Auth, users, donations, geographic data
+│   │   ├── data/                 # Bangladesh districts & upazilas (JSON)
+│   │   ├── management/commands/  # seed_areas
 │   │   ├── services.py           # OTP + SMS gateway integration point
 │   │   └── tests.py              # API test suite
 │   ├── sitesetting/              # Site configuration app
@@ -241,8 +263,13 @@ pip install -r requirements/dev.txt
 set DJANGO_SETTINGS_MODULE=project.settings.development
 python manage.py makemigrations users sitesetting   # migrations aren't tracked in git
 python manage.py migrate
+python manage.py seed_areas
 python manage.py runserver
 ```
+
+The frontend calls the API same-origin through nginx, so full-stack work is
+easiest with `docker compose up`. Running `npm run dev` directly only serves
+pages that don't need the API unless you put a proxy in front.
 
 ```bash
 cd frontend

@@ -78,15 +78,22 @@ def health_ready(request):
 @require_GET
 def health_status(request):
     """
-    Detailed health status endpoint with system information.
+    Application status endpoint. Runtime version details are only included
+    for staff users so they aren't leaked publicly.
     """
-    import sys
-    import django
+    from django.conf import settings
 
-    return JsonResponse({
+    payload = {
         'status': 'ok',
         'application': 'Blood Donation Backend',
-        'version': '1.0.0',
-        'python_version': sys.version,
-        'django_version': django.get_version(),
-    })
+        'version': settings.APP_VERSION,
+    }
+
+    if request.user.is_authenticated and request.user.is_staff:
+        import platform
+        import django
+
+        payload['python_version'] = platform.python_version()
+        payload['django_version'] = django.get_version()
+
+    return JsonResponse(payload)

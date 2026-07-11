@@ -15,9 +15,6 @@ Pillow==12.3.0
 # Authentication
 djangorestframework-simplejwt==5.5.1
 
-# Filtering and Search
-django-filter==25.2
-
 # API Documentation
 drf-yasg==1.21.15
 
@@ -25,14 +22,8 @@ drf-yasg==1.21.15
 django-import-export==4.4.1
 openpyxl==3.1.5  # xlsx support for import/export
 
-# Admin Enhancements
-django-nested-inline==0.4.6
-
 # CORS Handling
 django-cors-headers==4.9.0
 
 # Environment Variables
 python-decouple==3.8
-
-# Date/Time Utilities
-python-dateutil==2.9.0.post0

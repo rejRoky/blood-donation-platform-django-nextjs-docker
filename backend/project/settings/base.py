@@ -28,11 +28,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
-    "django_filters",
     "drf_yasg",
-    "django_redis",
     "import_export",
-    "nested_inline",
     "corsheaders",
     # Local apps
     "users",
@@ -166,9 +163,6 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
-    ],
-    'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend',
     ],
     'EXCEPTION_HANDLER': 'project.exceptions.api_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'project.pagination.StandardResultsSetPagination',

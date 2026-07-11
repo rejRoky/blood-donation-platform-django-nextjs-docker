@@ -1,7 +1,27 @@
 import uuid
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+
+BLOOD_GROUP_CHOICES = (
+    ('A+', 'A+'),
+    ('A-', 'A-'),
+    ('B+', 'B+'),
+    ('B-', 'B-'),
+    ('AB+', 'AB+'),
+    ('AB-', 'AB-'),
+    ('O+', 'O+'),
+    ('O-', 'O-'),
+)
+
+# NOTE: 'Donar' is a historical misspelling kept as the stored value so
+# existing rows stay valid; only the display label is corrected.
+Roles = (
+    ('Admin', 'Admin'),
+    ('Manager', 'Manager'),
+    ('Donar', 'Donor'),
+)
 
 
 class UserManager(BaseUserManager):
@@ -19,29 +39,23 @@ class UserManager(BaseUserManager):
         return self.create_user(mobile_number, password, **extra_fields)
 
 
-Roles = (
-    ('Admin', 'Admin'),
-    ('Manager', 'Manager'),
-    ('Donar', 'Donar'),
-
-)
-
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True)
-    mobile_number = models.CharField(max_length=20, unique=True)
+    mobile_number = models.CharField(max_length=20, unique=True, db_index=True)
     first_name = models.CharField(max_length=50, blank=True, null=True)
     last_name = models.CharField(max_length=50, blank=True, null=True)
     email = models.EmailField(unique=True, blank=True, null=True)
     profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
-    blood_group = models.CharField(max_length=10, blank=True, null=True)
+    blood_group = models.CharField(max_length=10, choices=BLOOD_GROUP_CHOICES, blank=True, null=True)
 
     # donation related fields
     is_donate_first = models.BooleanField(default=False)
     is_donate = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
-    address = models.ForeignKey('UserAddress', on_delete=models.CASCADE, blank=True, null=True, related_name='user_address')
-
+    address = models.ForeignKey(
+        'UserAddress', on_delete=models.SET_NULL, blank=True, null=True, related_name='user_address'
+    )
 
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
@@ -54,6 +68,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     USERNAME_FIELD = 'mobile_number'
     REQUIRED_FIELDS = []
 
+    def get_full_name(self):
+        return f'{self.first_name or ""} {self.last_name or ""}'.strip()
+
     def __str__(self):
         return f'{self.mobile_number} - {self.first_name} {self.last_name}'
 
@@ -64,6 +81,7 @@ class UserActionLog(models.Model):
         ('REGISTER', 'Register'),
         ('UPDATE', 'Profile Update'),
         ('LOGOUT', 'Logout'),
+        ('PASSWORD_RESET', 'Password Reset'),
         ('REQUEST', 'Request'),
     )
 
@@ -83,6 +101,7 @@ class UserActionLog(models.Model):
     def __str__(self):
         return f'{self.user.mobile_number} - {self.action_type} - {self.timestamp}'
 
+
 class UserAddress(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     district = models.ForeignKey('Districts', on_delete=models.CASCADE, blank=True, null=True, related_name='district')
@@ -91,8 +110,12 @@ class UserAddress(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, editable=False, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True, editable=False, null=True, blank=True)
 
+    class Meta:
+        verbose_name_plural = 'User addresses'
+
     def __str__(self):
-        return f'{self.user.mobile_number} - {self.address}'
+        return f'{self.user.mobile_number} - {self.district} / {self.upazila}'
+
 
 class Districts(models.Model):
     id = models.IntegerField(unique=True, primary_key=True)
@@ -102,26 +125,37 @@ class Districts(models.Model):
     lon = models.CharField(max_length=50, null=True, blank=True)
     url = models.CharField(max_length=50, null=True, blank=True)
 
+    class Meta:
+        verbose_name_plural = 'Districts'
+        ordering = ['name']
 
     def __str__(self):
-        return self.name
+        return self.name or f'District {self.id}'
 
 
 class Upazilas(models.Model):
     id = models.IntegerField(unique=True, primary_key=True)
-    district_id = models.IntegerField(null=True, blank=True)
+    district_id = models.IntegerField(null=True, blank=True, db_index=True)
     name = models.CharField(max_length=50, null=True, blank=True)
     bn_name = models.CharField(max_length=50, null=True, blank=True)
     url = models.CharField(max_length=50, null=True, blank=True)
 
+    class Meta:
+        verbose_name_plural = 'Upazilas'
+        ordering = ['name']
 
     def __str__(self):
-        return self.name
+        return self.name or f'Upazila {self.id}'
+
 
 class Donations(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    donation_date = models.DateTimeField(null=True, blank=True)
-    amount = models.IntegerField(default=0, null=True, blank=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='donations')
+    donation_date = models.DateField(null=True, blank=True)
+    amount = models.PositiveIntegerField(default=0, null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, editable=False, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True, editable=False, null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -129,7 +163,9 @@ class Donations(models.Model):
             models.Index(fields=['donation_date']),
         ]
         ordering = ['-donation_date']
-
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'donation_date'], name='unique_user_donation_per_date'),
+        ]
 
     def __str__(self):
         return f'{self.user.mobile_number} - {self.amount} - {self.donation_date}'

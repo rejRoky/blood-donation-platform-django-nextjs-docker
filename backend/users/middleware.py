@@ -1,31 +1,46 @@
-from os.path import split
+"""
+Request logging middleware.
 
-from django.utils.timezone import now
-from .models import UserActionLog
+Requests are logged through the standard logging pipeline (stdout + rotating
+file) instead of writing a database row per request — a per-request INSERT
+does not survive production traffic. Security-relevant events (login,
+registration, password reset, ...) are persisted to UserActionLog explicitly
+in the views that handle them.
+"""
 
-class UserActionLoggerMiddleware:
+import logging
+import time
+
+logger = logging.getLogger('api.requests')
+
+_SKIP_PREFIXES = ('/health/', '/static/', '/media/', '/favicon')
+
+
+def _client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '0.0.0.0')
+
+
+class RequestLogMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        start = time.monotonic()
         response = self.get_response(request)
 
-        if request.user.is_authenticated:
-            # Capture the user's IP address
-            ip_address = request.META.get('HTTP_X_FORWARDED_FOR')
-            if ip_address:
-                ip_address = ip_address.split(',')[0]  # Get the first IP if there are multiple
-            else:
-                ip_address = request.META.get('REMOTE_ADDR', '0.0.0.0')
-
-            # Skip logging for health check and static file endpoints
-            if not request.path.startswith(('/health/', '/static/', '/media/')):
-                # Create a log entry for the action
-                UserActionLog.objects.create(
-                    user=request.user,
-                    action_type=f'{request.method} {split(request.path)[0]}',
-                    action_description=f"{request.user} accessed {request.path}",
-                    ip_address=ip_address,
-                    timestamp=now()
-                )
+        if not request.path.startswith(_SKIP_PREFIXES):
+            duration_ms = (time.monotonic() - start) * 1000
+            user = getattr(request, 'user', None)
+            logger.info(
+                '%s %s %s %.0fms user=%s ip=%s',
+                request.method,
+                request.path,
+                response.status_code,
+                duration_ms,
+                getattr(user, 'mobile_number', '-') if getattr(user, 'is_authenticated', False) else '-',
+                _client_ip(request),
+            )
         return response

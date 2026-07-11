@@ -1,21 +1,34 @@
-import random
 import logging
 
 from django.contrib.auth import authenticate
-from django.core.cache import cache
+from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from datetime import datetime, timedelta
+from django.conf import settings
 
-from .models import User, Districts, Upazilas, UserAddress, Donations
-from .serializers import UserSerializer, DistrictSerializer, UpazilaSerializer, DonationsSerializer
+from . import services
+from .models import User, Districts, Upazilas, UserAddress, Donations, UserActionLog
+from .serializers import (
+    UserSerializer,
+    DonorListSerializer,
+    UserRegistrationSerializer,
+    UserLoginSerializer,
+    ProfileUpdateSerializer,
+    SendResetOtpSerializer,
+    VerifyResetOtpSerializer,
+    ResetPasswordSerializer,
+    DistrictSerializer,
+    UpazilaSerializer,
+    DonationsSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,187 +37,112 @@ def get_client_ip(request):
     """Helper function to get the client IP address."""
     ip_address = request.META.get('HTTP_X_FORWARDED_FOR')
     if ip_address:
-        ip_address = ip_address.split(',')[0]
+        ip_address = ip_address.split(',')[0].strip()
     else:
         ip_address = request.META.get('REMOTE_ADDR', '0.0.0.0')
     return ip_address
 
 
+def _log_action(user, action_type, description, request):
+    """Persist a security-relevant user action; never break the request over it."""
+    try:
+        UserActionLog.objects.create(
+            user=user,
+            action_type=action_type,
+            action_description=description,
+            ip_address=get_client_ip(request),
+        )
+    except Exception:
+        logger.exception("Failed to write user action log")
+
+
+def _user_address_payload(user):
+    """Login/profile convenience payload describing the user's address."""
+    address = user.address or UserAddress.objects.filter(user=user).select_related('district', 'upazila').first()
+    if address is None or address.district is None or address.upazila is None:
+        return None
+    return {
+        'district': address.district.name,
+        'district_id': address.district.id,
+        'upazila': address.upazila.name,
+        'upazila_id': address.upazila.id,
+    }
+
+
 class RegisterUser(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'register'
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING,
-                                                description='Mobile number of the user, must be 11 digits long and start with 01 and contain only digits'),
-                'password': openapi.Schema(type=openapi.TYPE_STRING,
-                                           description='Password of the user, must be at least 8 characters long and contain at least one digit, one alphabet, one uppercase letter, one lowercase letter, and one special character'),
-                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='First name of the user'),
-                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Last name of the user'),
-                'blood_group': openapi.Schema(type=openapi.TYPE_STRING, description='Blood group of the user'),
-                'district': openapi.Schema(type=openapi.TYPE_INTEGER, description='District of the user'),
-                'upazila': openapi.Schema(type=openapi.TYPE_INTEGER, description='Upazila of the user'),
-
-            },
-            required=['mobile_number', 'password', 'first_name', 'last_name', 'blood_group', 'district', 'upazila'],
-
-        ),
-        responses={201: 'Success'},
+        request_body=UserRegistrationSerializer,
+        responses={201: UserSerializer, 400: 'Validation error'},
+        security=[],
     )
     def post(self, request):
-        mobile_number = request.data.get('mobile_number')
-        password = request.data.get('password')
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        blood_group = request.data.get('blood_group')
-        district = request.data.get('district')
-        upazila = request.data.get('upazila')
+        serializer = UserRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
 
-        # Null validation
-        if mobile_number is None:
-            return Response({'error': 'Mobile number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        _log_action(user, 'REGISTER', 'User registered', request)
 
-        if password is None:
-            return Response({'error': 'Password is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if first_name is None:
-            return Response({'error': 'First name is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if last_name is None:
-            return Response({'error': 'Last name is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if blood_group is None:
-            return Response({'error': 'Blood group is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if district is None:
-            return Response({'error': 'District is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if upazila is None:
-            return Response({'error': 'Upazila is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Mobile number validation
-        if mobile_number == '' or password == '' or first_name == '' or last_name == '' or blood_group == '' or district == '' or upazila == '':
-            return Response({'error': 'Fields cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if mobile_number is not None and len(mobile_number) != 11:
-            return Response({'error': 'Mobile number must be 11 digits long'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not mobile_number.isdigit():
-            return Response({'error': 'Mobile number must contain only digits'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not mobile_number.startswith('01'):
-            return Response({'error': 'Mobile number must start with 01'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Password validation
-        if password is None or len(password) < 8:
-            return Response({'error': 'Password must be at least 8 characters long'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if not any(char.isdigit() for char in password):
-            return Response({'error': 'Password must contain at least one digit'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not any(char.isalpha() for char in password):
-            return Response({'error': 'Password must contain at least one alphabet'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if not any(char.isupper() for char in password):
-            return Response({'error': 'Password must contain at least one uppercase letter'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if not any(char.islower() for char in password):
-            return Response({'error': 'Password must contain at least one lowercase letter'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if not any(char in ['@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '+', '='] for char in password):
-            return Response({'error': 'Password must contain at least one special character'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if User.objects.filter(mobile_number=mobile_number).exists():
-            return Response({'error': 'User already exists'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = User.objects.create_user(mobile_number, password)
-        user.first_name = first_name
-        user.last_name = last_name
-        user.blood_group = blood_group
-        # Staff status should only be assigned through admin panel or management commands
-        user.save()
-        serializer = UserSerializer(user)
-
-        if district is not None and upazila is not None:
-            district = Districts.objects.get(id=district)
-            upazila = Upazilas.objects.get(id=upazila)
-            UserAddress.objects.create(user=user, district=district, upazila=upazila)
-
-        # Log user registration
-        # logger.info(f"User {user.mobile_number} registered at {now()}.")
-        # UserActionLog.objects.create(user=user, action_type='REGISTER', action_description='User registered', ip_address=get_client_ip(request))
-
-        return Response(serializer.data)
+        return Response(
+            {
+                'success': True,
+                'message': 'Registration successful.',
+                **UserSerializer(user).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LoginUser(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Mobile number of the user'),
-                'password': openapi.Schema(type=openapi.TYPE_STRING, description='Password of the user'),
-            },
-            required=['username', 'password'],
-        ),
-        responses={200: 'Success'},
+        request_body=UserLoginSerializer,
+        responses={200: 'Access/refresh token pair with user profile', 401: 'Invalid credentials'},
+        security=[],
     )
     def post(self, request):
-        mobile_number = request.data.get('mobile_number')
-        password = request.data.get('password')
+        serializer = UserLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        if mobile_number is None:
-            return Response({'error': 'Mobile number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        # Single authenticate call; the same generic message is returned whether
+        # the account is missing, inactive, or the password is wrong, so mobile
+        # numbers cannot be enumerated through this endpoint.
+        user = authenticate(
+            request,
+            mobile_number=serializer.validated_data['mobile_number'],
+            password=serializer.validated_data['password'],
+        )
+        if user is None:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'Invalid mobile number or password.',
+                    'code': 'invalid_credentials',
+                    'status_code': status.HTTP_401_UNAUTHORIZED,
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
-        if password is None:
-            return Response({'error': 'Password is required'}, status=status.HTTP_400_BAD_REQUEST)
+        refresh = RefreshToken.for_user(user)
+        _log_action(user, 'LOGIN', 'User logged in', request)
 
-        if mobile_number == '' or password == '':
-            return Response({'error': 'Fields cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not User.objects.filter(mobile_number=mobile_number).exists():
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if not User.objects.get(mobile_number=mobile_number).is_active:
-            return Response({'error': 'User is not active'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        if not authenticate(mobile_number=mobile_number, password=password):
-            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        user = authenticate(mobile_number=mobile_number, password=password)
-
-        if user:
-            refresh = RefreshToken.for_user(user)
-
-            # User Address
-            user_address = UserAddress.objects.filter(user=user).first()
-            if user_address is not None:
-                user_address = {
-                    'district': user_address.district.name,
-                    'district_id': user_address.district.id,
-                    'upazila': user_address.upazila.name,
-                    'upazila_id': user_address.upazila.id,
-                }
-            return Response({
-                'token':
-                    {
-                        'refresh': str(refresh),
-                        'access': str(refresh.access_token),
-                        'token_type': 'Bearer',
-                        'expires_in': refresh.access_token.lifetime.total_seconds(),  # seconds
-                    },
-                'user': UserSerializer(user).data,
-                'user_address': user_address
-
-            })
-        return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({
+            'success': True,
+            'token': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'token_type': 'Bearer',
+                'expires_in': refresh.access_token.lifetime.total_seconds(),
+            },
+            'user': UserSerializer(user).data,
+            'user_address': _user_address_payload(user),
+        })
 
 
 class LogoutUser(APIView):
@@ -218,93 +156,84 @@ class LogoutUser(APIView):
             },
             required=['refresh'],
         ),
-        responses={200: 'Success'},
+        responses={200: 'Success', 400: 'Invalid token'},
     )
     def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response(
+                {'success': False, 'message': 'Refresh token is required.', 'code': 'validation_error',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            # Get the refresh token from the request
-            refresh_token = request.data.get('refresh')
-
-            if not refresh_token:
-                return Response({'error': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Decode and revoke the refresh token
             token = RefreshToken(refresh_token)
             token.blacklist()
+        except TokenError:
+            return Response(
+                {'success': False, 'message': 'Invalid or expired refresh token.', 'code': 'invalid_token',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            # Log the user logout
-            # logger.info(f"User {request.user.mobile_number} logged out.")
-
-            return Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            # logger.error(f"Error logging out user: {e}")
-            return Response({'error': 'Invalid token or error processing request'}, status=status.HTTP_400_BAD_REQUEST)
+        _log_action(request.user, 'LOGOUT', 'User logged out', request)
+        return Response({'success': True, 'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
 
 
 class Profile(APIView):
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: 'Success'},
-    )
+    @swagger_auto_schema(responses={200: UserSerializer})
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='First name of the user'),
-                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Last name of the user'),
-                'blood_group': openapi.Schema(type=openapi.TYPE_STRING, description='Blood group of the user'),
-                'district_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='District of the user'),
-                'upazila_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='Upazila of the user'),
-
-            },
-            required=['first_name', 'last_name', 'blood_group', 'district', 'upazila'],
-        ),
-        responses={200: 'Success'},
+        request_body=ProfileUpdateSerializer,
+        responses={200: UserSerializer, 400: 'Validation error'},
     )
     def put(self, request):
-        user = request.user
-        data = request.data
-        user.first_name = data.get('first_name', user.first_name)
-        user.last_name = data.get('last_name', user.last_name)
-        user.blood_group = data.get('blood_group', user.blood_group)
+        serializer = ProfileUpdateSerializer(
+            instance=request.user, data=request.data, partial=True, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
 
-        district_id = data.get('district_id')
-        upazila_id = data.get('upazila_id')
-
-        if district_id is not None and upazila_id is not None:
-            district = Districts.objects.get(id=district_id)
-            upazila = Upazilas.objects.get(id=upazila_id)
-            user_address = UserAddress.objects.filter(user=user).first()
-            if user_address is not None:
-                user_address.district = district
-                user_address.upazila = upazila
-                user_address.save()
-            else:
-                UserAddress.objects.create(user=user, district=district, upazila=upazila)
-
-        user.save()
-        serializer = UserSerializer(user)
-
-        # Log user profile update
-        # logger.info(f"User {user.mobile_number} updated profile at {now()}.")
-        # UserActionLog.objects.create(user=request.user, action_type='UPDATE', action_description='User updated profile', ip_address=get_client_ip(request))
-        return Response(serializer.data)
+        _log_action(user, 'UPDATE', 'User updated profile', request)
+        return Response(UserSerializer(user).data)
 
 
 class UserList(APIView):
+    """
+    Donor directory. Staff accounts are excluded — this endpoint exists so
+    donors can find each other, not to enumerate administrators.
+    """
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter('blood_group', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('district_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('upazila_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('page_size', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+        ],
+        responses={200: UserSerializer(many=True)},
+    )
     def get(self, request):
-        if request.user.is_active is False:
-            return Response({'error': 'User is not active'}, status=status.HTTP_401_UNAUTHORIZED)
+        from django.db.models import Count, Max
 
-        users = User.objects.all()
+        users = (
+            User.objects
+            .filter(is_active=True, is_staff=False, is_superuser=False)
+            .select_related('address__district', 'address__upazila')
+            .annotate(
+                donation_count=Count('donations'),
+                last_donation_date=Max('donations__donation_date'),
+            )
+            .order_by('-created_at')
+        )
 
         blood_group = request.query_params.get('blood_group')
         district_id = request.query_params.get('district_id')
@@ -317,18 +246,30 @@ class UserList(APIView):
         if upazila_id:
             users = users.filter(address__upazila_id=upazila_id)
 
-        paginator = PageNumberPagination()
-        paginator.page_size = 10
+        from project.pagination import StandardResultsSetPagination
+        paginator = StandardResultsSetPagination()
         result_page = paginator.paginate_queryset(users, request)
-        serializer = UserSerializer(result_page, many=True)
+        serializer = DonorListSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
 
-class DistrictView(APIView):
+class UserDetailView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: 'Success'},
-    )
+    @swagger_auto_schema(responses={200: UserSerializer, 404: 'Not Found'})
+    def get(self, request, pk):
+        user = get_object_or_404(
+            User.objects.select_related('address__district', 'address__upazila'),
+            pk=pk, is_active=True,
+        )
+        serializer = UserSerializer(user)
+        return Response(serializer.data)
+
+
+class DistrictView(APIView):
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(responses={200: DistrictSerializer(many=True)}, security=[])
     def get(self, request):
         districts = Districts.objects.all()
         serializer = DistrictSerializer(districts, many=True)
@@ -336,8 +277,20 @@ class DistrictView(APIView):
 
 
 class UpazilaView(APIView):
-    @swagger_auto_schema(
+    permission_classes = [AllowAny]
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter('district_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True),
+        ],
+        responses={200: UpazilaSerializer(many=True)},
+        security=[],
+    )
+    def get(self, request):
+        """Canonical read endpoint: GET /area/upazila/?district_id=N"""
+        return self._list(request.query_params.get('district_id'))
+
+    @swagger_auto_schema(
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
@@ -345,13 +298,20 @@ class UpazilaView(APIView):
             },
             required=['district_id'],
         ),
-        responses={200: 'Success'},
+        responses={200: UpazilaSerializer(many=True)},
+        security=[],
     )
     def post(self, request):
-        district_id = request.data.get('district_id')
-        if district_id is None:
-            return Response({'error': 'District ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        """Legacy body-based variant kept for existing clients."""
+        return self._list(request.data.get('district_id'))
 
+    def _list(self, district_id):
+        if district_id in (None, ''):
+            return Response(
+                {'success': False, 'message': 'District ID is required.', 'code': 'validation_error',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         upazilas = Upazilas.objects.filter(district_id=district_id)
         serializer = UpazilaSerializer(upazilas, many=True)
         return Response(serializer.data)
@@ -371,165 +331,153 @@ class IsDonateFirstView(APIView):
         responses={200: 'Success'},
     )
     def post(self, request):
-
         is_donate_first = request.data.get('is_donate_first')
+        if not isinstance(is_donate_first, bool):
+            return Response(
+                {'success': False, 'message': 'is_donate_first must be a boolean.', 'code': 'validation_error',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if is_donate_first is None:
-            return Response({'error': 'Is donate first is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user
-
-        if is_donate_first is True:
-            user.is_donate_first = True
-            user.save()
-            return Response({'message': 'User has donated first'}, status=status.HTTP_200_OK)
-
-        if is_donate_first is False:
-            user.is_donate_first = False
-            user.save()
-            return Response({'message': 'User has not donated first'}, status=status.HTTP_200_OK)
-
-        return Response({'error': 'Invalid request'}, status=status.HTTP_400_BAD_REQUEST)
+        request.user.is_donate_first = is_donate_first
+        request.user.save(update_fields=['is_donate_first', 'updated_at'])
+        return Response({'success': True, 'message': 'Donation preference updated.'}, status=status.HTTP_200_OK)
 
 
 class IsActiveView(APIView):
+    """Toggles the user's donor availability flag (is_donate)."""
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'is_active': openapi.Schema(type=openapi.TYPE_BOOLEAN, description='Is active'),
+                'is_active': openapi.Schema(type=openapi.TYPE_BOOLEAN, description='Donor availability'),
             },
             required=['is_active'],
         ),
         responses={200: 'Success'},
     )
     def post(self, request):
-
         is_active = request.data.get('is_active')
+        if not isinstance(is_active, bool):
+            return Response(
+                {'success': False, 'message': 'is_active must be a boolean.', 'code': 'validation_error',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if is_active is None:
-            return Response({'error': 'Is active is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user
-
-        if is_active is True:
-            user.is_donate = True
-            user.save()
-            return Response({'message': 'User is active'}, status=status.HTTP_200_OK)
-
-        if is_active is False:
-            user.is_donate = False
-            user.save()
-            return Response({'message': 'User is not active'}, status=status.HTTP_200_OK)
-
-        return Response({'error': 'Invalid request'}, status=status.HTTP_400_BAD_REQUEST)
-
-
-class UserDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(responses={200: 'Success', 404: 'Not Found'})
-    def get(self, request, pk):
-        try:
-            user = User.objects.get(pk=pk)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-        serializer = UserSerializer(user)
-        return Response(serializer.data)
+        request.user.is_donate = is_active
+        request.user.save(update_fields=['is_donate', 'updated_at'])
+        return Response({'success': True, 'message': 'Donor availability updated.'}, status=status.HTTP_200_OK)
 
 
 class SendResetPasswordOtpView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp'
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
-            },
-            required=['mobile_number'],
-        ),
-        responses={200: 'OTP sent', 404: 'User not found'},
+        request_body=SendResetOtpSerializer,
+        responses={200: 'OTP dispatched if the account exists'},
+        security=[],
     )
     def post(self, request):
-        mobile_number = request.data.get('mobile_number')
-        if not mobile_number:
-            return Response({'error': 'Mobile number is required'}, status=status.HTTP_400_BAD_REQUEST)
-        if not User.objects.filter(mobile_number=mobile_number).exists():
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SendResetOtpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mobile_number = serializer.validated_data['mobile_number']
 
-        otp = str(random.randint(100000, 999999))
-        cache.set(f'reset_otp_{mobile_number}', otp, timeout=300)
-        # TODO: send OTP via SMS in production
-        return Response({'message': 'OTP sent successfully', 'otp': otp}, status=status.HTTP_200_OK)
+        payload = {
+            'success': True,
+            'message': 'If an account exists with this mobile number, an OTP has been sent.',
+        }
+
+        # The OTP is only actually generated for existing accounts, but the
+        # response is identical either way so accounts cannot be enumerated.
+        if User.objects.filter(mobile_number=mobile_number, is_active=True).exists():
+            otp = services.send_otp(mobile_number)
+            if settings.OTP_DEBUG_EXPOSE:
+                payload['otp'] = otp
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class VerifyResetPasswordOtpView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp'
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
-                'otp': openapi.Schema(type=openapi.TYPE_STRING, description='6-digit OTP received'),
-            },
-            required=['mobile_number', 'otp'],
-        ),
-        responses={200: 'OTP verified', 400: 'Invalid or expired OTP'},
+        request_body=VerifyResetOtpSerializer,
+        responses={200: 'OTP verified; response contains reset_token', 400: 'Invalid or expired OTP'},
+        security=[],
     )
     def post(self, request):
-        mobile_number = request.data.get('mobile_number')
-        otp = request.data.get('otp')
-        if not mobile_number or not otp:
-            return Response({'error': 'Mobile number and OTP are required'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = VerifyResetOtpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        cached_otp = cache.get(f'reset_otp_{mobile_number}')
-        if cached_otp is None:
-            return Response({'error': 'OTP expired or not found'}, status=status.HTTP_400_BAD_REQUEST)
-        if cached_otp != str(otp):
-            return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+        reset_token = services.verify_otp(
+            serializer.validated_data['mobile_number'],
+            serializer.validated_data['otp'],
+        )
+        if reset_token is None:
+            return Response(
+                {'success': False, 'message': 'Invalid or expired OTP.', 'code': 'invalid_otp',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        cache.set(f'otp_verified_{mobile_number}', True, timeout=300)
-        cache.delete(f'reset_otp_{mobile_number}')
-        return Response({'message': 'OTP verified successfully'}, status=status.HTTP_200_OK)
+        return Response(
+            {'success': True, 'message': 'OTP verified successfully.', 'reset_token': reset_token},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp'
 
     @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'mobile_number': openapi.Schema(type=openapi.TYPE_STRING, description='Registered mobile number'),
-                'new_password': openapi.Schema(type=openapi.TYPE_STRING, description='New password (min 8 chars)'),
-            },
-            required=['mobile_number', 'new_password'],
-        ),
-        responses={200: 'Password reset successfully', 400: 'OTP not verified or invalid password'},
+        request_body=ResetPasswordSerializer,
+        responses={200: 'Password reset successfully', 400: 'Invalid or expired reset token'},
+        security=[],
     )
     def post(self, request):
-        mobile_number = request.data.get('mobile_number')
-        new_password = request.data.get('new_password')
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mobile_number = serializer.validated_data['mobile_number']
 
-        if not mobile_number or not new_password:
-            return Response({'error': 'Mobile number and new password are required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not cache.get(f'otp_verified_{mobile_number}'):
-            return Response({'error': 'OTP not verified. Please verify OTP first.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not services.consume_reset_token(mobile_number, serializer.validated_data['reset_token']):
+            return Response(
+                {'success': False, 'message': 'Invalid or expired reset token. Please verify the OTP again.',
+                 'code': 'invalid_reset_token', 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            user = User.objects.get(mobile_number=mobile_number)
+            user = User.objects.get(mobile_number=mobile_number, is_active=True)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'success': False, 'message': 'Invalid or expired reset token. Please verify the OTP again.',
+                 'code': 'invalid_reset_token', 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if len(new_password) < 8:
-            return Response({'error': 'Password must be at least 8 characters'}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password', 'updated_at'])
 
-        user.set_password(new_password)
-        user.save()
-        cache.delete(f'otp_verified_{mobile_number}')
-        return Response({'message': 'Password reset successfully'}, status=status.HTTP_200_OK)
+        # Revoke every outstanding refresh token so stolen sessions die with
+        # the old password.
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+            for token in OutstandingToken.objects.filter(user=user):
+                BlacklistedToken.objects.get_or_create(token=token)
+        except Exception:
+            logger.exception("Failed to blacklist outstanding tokens after password reset")
+
+        _log_action(user, 'PASSWORD_RESET', 'Password reset via OTP', request)
+        return Response({'success': True, 'message': 'Password reset successfully.'}, status=status.HTTP_200_OK)
 
 
 class DonationView(APIView):
@@ -539,64 +487,27 @@ class DonationView(APIView):
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'amount': openapi.Schema(type=openapi.TYPE_INTEGER, description='Amount of donation'),
+                'amount': openapi.Schema(type=openapi.TYPE_INTEGER, description='Amount of donation (ml)'),
                 'date': openapi.Schema(type=openapi.TYPE_STRING, format='date',
                                        description='Date of donation (YYYY-MM-DD)'),
             },
             required=['amount', 'date'],
         ),
-        responses={
-            201: openapi.Response('Donation created successfully'),
-            400: 'Invalid input',
-        },
+        responses={201: DonationsSerializer, 400: 'Validation error'},
     )
     def post(self, request):
-        amount = request.data.get('amount')
-        date = request.data.get('date')
+        serializer = DonationsSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {'success': True, 'message': 'Donation added successfully.', 'donation': serializer.data},
+            status=status.HTTP_201_CREATED,
+        )
 
-        try:
-            donation_date = datetime.strptime(date, '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'error': 'Invalid date format, expected YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # Check if a donation already exists for the same date
-            if Donations.objects.filter(user=request.user, donation_date=donation_date).exists():
-                return Response({'error': 'Donation already exists for this date'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get the last donation and check the 120-day rule
-            last_donation = Donations.objects.filter(user=request.user).order_by('-donation_date').first()
-            if last_donation:
-                last_donation_date = last_donation.donation_date
-                if isinstance(last_donation_date, datetime):
-                    last_donation_date = last_donation_date.date()
-
-                # Calculate remaining days for next donation
-                next_donation_date = last_donation_date + timedelta(days=120)
-                remaining_days = (next_donation_date - donation_date).days
-
-                if remaining_days > 0:
-                    return Response({
-                        'error': 'Donation not allowed within 120 days of the last donation',
-                        'next_donation_date': next_donation_date.strftime('%Y-%m-%d'),
-                        'remaining_days': remaining_days,
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Create the donation
-            Donations.objects.create(user=request.user, amount=amount, donation_date=donation_date)
-
-        except Exception as e:
-            return Response({'error': 'Failed to create donation', 'details': str(e)},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response({'message': 'Donation added successfully'}, status=status.HTTP_201_CREATED)
-
-    @swagger_auto_schema(
-        responses={200: 'Success'},
-    )
+    @swagger_auto_schema(responses={200: DonationsSerializer(many=True)})
     def get(self, request):
         donations = Donations.objects.filter(user=request.user)
-        serializer = DonationsSerializer(donations, many=True)
+        serializer = DonationsSerializer(donations, many=True, context={'request': request})
         return Response(serializer.data)
 
     @swagger_auto_schema(
@@ -607,18 +518,24 @@ class DonationView(APIView):
             },
             required=['donation_id'],
         ),
-        responses={200: 'Success'},
+        responses={200: 'Success', 404: 'Not found'},
     )
     def delete(self, request):
         donation_id = request.data.get('donation_id')
-
         if donation_id is None:
-            return Response({'error': 'Donation ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'success': False, 'message': 'Donation ID is required.', 'code': 'validation_error',
+                 'status_code': status.HTTP_400_BAD_REQUEST},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        try:
-            donation = Donations.objects.get(id=donation_id)
-            donation.delete()
-        except Donations.DoesNotExist:
-            return Response({'error': 'Donation not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Scoped to the requesting user: nobody can delete another donor's records.
+        deleted, _ = Donations.objects.filter(id=donation_id, user=request.user).delete()
+        if not deleted:
+            return Response(
+                {'success': False, 'message': 'Donation not found.', 'code': 'not_found',
+                 'status_code': status.HTTP_404_NOT_FOUND},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        return Response({'message': 'Donation deleted successfully'}, status=status.HTTP_200_OK)
+        return Response({'success': True, 'message': 'Donation deleted successfully.'}, status=status.HTTP_200_OK)

@@ -5,7 +5,7 @@
 # missing credentials instead of silently falling back to insecure defaults.
 services:
   db:
-    ports: []
+    ports: !override []
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -13,8 +13,11 @@ services:
       TZ: ${TZ:-Asia/Dhaka}
 
   redis:
-    ports: []
+    ports: !override []
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    environment:
+      # Required by the healthcheck, which authenticates inside the container
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 10s
@@ -22,9 +25,10 @@ services:
       retries: 5
 
   backend:
-    ports: []
+    ports: !override []
     # No source mount in production — the image is the artifact.
-    volumes:
+    # (!override replaces the dev list instead of merging with it)
+    volumes: !override
       - static_volume:/code/staticfiles
       - media_volume:/code/media
       - logs_volume:/code/logs
@@ -42,6 +46,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-True}
       - SENTRY_DSN=${SENTRY_DSN:-}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - API_DOCS_ENABLED=${API_DOCS_ENABLED:-False}
@@ -55,8 +60,8 @@ services:
       # Standalone Next.js server; browser API calls are same-origin via nginx
       target: runner
     # No source mount in production — the image is the artifact.
-    volumes: []
-    ports: []
+    volumes: !override []
+    ports: !override []
     environment:
       - INTERNAL_API_URL=http://backend:8000
       - NEXTAUTH_URL=${NEXTAUTH_URL:?NEXTAUTH_URL is required}

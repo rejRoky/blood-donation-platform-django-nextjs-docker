@@ -126,7 +126,8 @@ services:
       - blood_donation_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/health/live/ || exit 1"]
+      # 127.0.0.1, not localhost: alpine resolves localhost to ::1 but nginx listens on IPv4 only
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health/live/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

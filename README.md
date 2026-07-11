@@ -6,6 +6,7 @@ A full-stack blood donation management system with a Django REST API backend and
 [![Django](https://img.shields.io/badge/Django-5.2%20LTS-green.svg)](https://www.djangoproject.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
@@ -55,6 +56,9 @@ cp .env.example .env
 ```bash
 docker compose up --build
 ```
+
+Database migrations are generated and applied automatically by the backend
+container on startup (migration files are intentionally not tracked in git).
 
 ### 3. Access
 | Service | URL |
@@ -117,7 +121,8 @@ blood-donation-backend-django/
 ├── nginx/                        # Reverse proxy: static, gzip, rate limiting
 ├── docker-compose.yml            # Development
 ├── docker-compose.prod.yml       # Production overlay
-└── .env.example
+├── .env.example
+└── LICENSE                       # MIT
 ```
 
 ---
@@ -229,6 +234,7 @@ python -m venv venv
 venv\Scripts\activate        # Windows
 pip install -r requirements/dev.txt
 set DJANGO_SETTINGS_MODULE=project.settings.development
+python manage.py makemigrations users sitesetting   # migrations aren't tracked in git
 python manage.py migrate
 python manage.py runserver
 ```

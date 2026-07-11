@@ -8,17 +8,5 @@ gunicorn==23.0.0
 # Error Monitoring
 sentry-sdk==2.19.2
 
-# Structured Logging
-python-json-logger==3.2.1
-
-# Rate Limiting
-django-ratelimit==4.1.0
-
-# Static Files (optional - if not using nginx for static files)
-whitenoise==6.8.2
-
-# Production Database Optimizations
-psycopg2-pool==1.1  # Connection pooling
-
-# Security
-django-defender==0.9.8  # Brute force protection (optional)
+# Static Files fallback (nginx serves the shared volume in front)
+whitenoise==6.12.0

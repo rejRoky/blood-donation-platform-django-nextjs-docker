@@ -42,7 +42,9 @@ const UpdateUserProfile = ({ user, setOpen }) => {
     useGetUpozillaQuery(districtId, {
       skip: !districtId,
     });
-  const upazillas = upazillaResponse?.data || [];
+  const upazillas = Array.isArray(upazillaResponse)
+    ? upazillaResponse
+    : upazillaResponse?.data || [];
 
   const [updateUserProfileData] = useUpdateUserProfileDataMutation();
 
@@ -73,7 +75,7 @@ const UpdateUserProfile = ({ user, setOpen }) => {
       reset({
         firstName: user.first_name,
         lastName: user.last_name,
-        phone_number: user.phone_number,
+        phone_number: user.mobile_number,
         blood_group: selectedBloodGroup || null,
         district_id: selectedDistrict || null,
         upazila_id: null,
@@ -97,7 +99,6 @@ const UpdateUserProfile = ({ user, setOpen }) => {
     const payload = {
       first_name: data.firstName,
       last_name: data.lastName,
-      phone_number: data.phone_number,
       blood_group: data.blood_group?.value,
       district_id: data.district_id?.id,
       upazila_id: data.upazila_id?.id,

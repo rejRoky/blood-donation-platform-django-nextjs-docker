@@ -26,7 +26,11 @@ const AddNewDonation = ({ userId, setOpen }) => {
 
   const onSubmit = async (formData) => {
     try {
-      await addDonationHistory(formData).unwrap();
+      await addDonationHistory({
+        date: formData.last_donation_date,
+        amount: Number(formData.blood_amount),
+        note: formData.note,
+      }).unwrap();
       toast.success("Donation saved successfully!");
       reset();
       handleClose();

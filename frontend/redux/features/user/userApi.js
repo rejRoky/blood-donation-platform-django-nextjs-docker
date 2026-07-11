@@ -7,6 +7,7 @@ const userApi = baseApi.injectEndpoints({
       query: (params = {}) => {
         const searchParams = new URLSearchParams();
         if (params.page) searchParams.append("page", params.page.toString());
+        if (params.page_size) searchParams.append("page_size", params.page_size.toString());
         if (params.blood_group) searchParams.append("blood_group", params.blood_group);
         if (params.district_id) searchParams.append("district_id", params.district_id.toString());
         if (params.upazila_id) searchParams.append("upazila_id", params.upazila_id.toString());

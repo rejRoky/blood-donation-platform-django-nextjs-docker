@@ -9,14 +9,13 @@ const areaApi = baseApi.injectEndpoints({
         method: "GET",
       }),
     }),
-    getUpozilla: builder.mutation({
+    getUpozilla: builder.query({
       query: (districtId) => ({
-        url: "/area/upazila/",
-        method: "POST",
-        body: { district_id: districtId },
+        url: `/area/upazila/?district_id=${districtId}`,
+        method: "GET",
       }),
     }),
   }),
 });
 
-export const { useGetDistrictQuery, useGetUpozillaMutation } = areaApi;
+export const { useGetDistrictQuery, useGetUpozillaQuery } = areaApi;

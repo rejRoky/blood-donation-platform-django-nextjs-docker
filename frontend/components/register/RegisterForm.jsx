@@ -51,7 +51,9 @@ const RegisterForm = () => {
     useGetUpozillaQuery(districtId, {
       skip: !districtId,
     });
-  const upozillas = upozillaResponse?.data || [];
+  const upozillas = Array.isArray(upozillaResponse)
+    ? upozillaResponse
+    : upozillaResponse?.data || [];
 
   const [userRegister, { isLoading, isSuccess, isError, error }] =
     useRegisterUserMutation();
@@ -87,10 +89,10 @@ const RegisterForm = () => {
     const userInfo = {
       first_name: formData?.firstName,
       last_name: formData?.lastName,
-      phone_number: formData?.phone_number,
+      mobile_number: formData?.phone_number,
       blood_group: formData?.bloodGroup.value,
-      district_id: formData?.district_id?.id,
-      upazila_id: formData?.upazila_id?.id,
+      district: formData?.district_id?.id,
+      upazila: formData?.upazila_id?.id,
       password: formData?.password,
     };
 
@@ -102,11 +104,20 @@ const RegisterForm = () => {
       toast.error(error?.data?.message || "Something went wrong");
 
       if (error?.data?.errors) {
+        // Map API field names back to this form's field names
+        const apiToFormField = {
+          mobile_number: "phone_number",
+          first_name: "firstName",
+          last_name: "lastName",
+          blood_group: "bloodGroup",
+          district: "district_id",
+          upazila: "upazila_id",
+        };
         const validationErrors = error.data.errors;
         Object.keys(validationErrors).forEach((fieldName) => {
           const messages = validationErrors[fieldName];
           if (messages.length > 0) {
-            setError(fieldName, {
+            setError(apiToFormField[fieldName] || fieldName, {
               type: "server",
               message: messages[0],
             });

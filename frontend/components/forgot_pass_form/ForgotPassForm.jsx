@@ -22,13 +22,15 @@ const ForgotPassForm = () => {
   const onSubmit = async (data) => {
     setServerError("");
     try {
-      const res = await sendResetOtp(data).unwrap();
+      const res = await sendResetOtp({
+        mobile_number: data.phone_number,
+      }).unwrap();
       toast.success(res.message);
       router.push(`/verify-otp?num=${data.phone_number}`);
     } catch (err) {
       if (err?.data?.errors) {
         Object.keys(err.data.errors).forEach((field) => {
-          setError(field, {
+          setError(field === "mobile_number" ? "phone_number" : field, {
             type: "server",
             message: err.data.errors[field][0],
           });

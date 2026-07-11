@@ -8,11 +8,11 @@ export const metadata = {
 const ResetPasswordPage = async ({ searchParams }) => {
   const params = await searchParams;
   const num = params?.num || "";
-  const otp = params?.otp || "";
+  const resetToken = params?.token || "";
 
   return (
     <div className="md:p-16 p-6 flex justify-center items-center h-[80vh]">
-      <ResetPassForm phoneNumber={num} otp={otp} />
+      <ResetPassForm phoneNumber={num} resetToken={resetToken} />
     </div>
   );
 };

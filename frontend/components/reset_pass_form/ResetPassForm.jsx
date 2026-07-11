@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-const ResetPassForm = ({ phoneNumber, otp }) => {
+const ResetPassForm = ({ phoneNumber, resetToken }) => {
   const router = useRouter();
   const [resetpassword, { isLoading }] = useResetPasswordMutation();
 
@@ -24,10 +24,9 @@ const ResetPassForm = ({ phoneNumber, otp }) => {
   const onSubmit = async (data) => {
     try {
       const res = await resetpassword({
-        phone_number: phoneNumber,
-        verification_otp: otp,
-        password: data.password,
-        confirm_password: data.confirm_password,
+        mobile_number: phoneNumber,
+        reset_token: resetToken,
+        new_password: data.password,
       }).unwrap();
 
       if (res.success) {
@@ -39,7 +38,7 @@ const ResetPassForm = ({ phoneNumber, otp }) => {
     } catch (err) {
       if (err?.data?.errors) {
         Object.entries(err.data.errors).forEach(([field, messages]) => {
-          setError(field, {
+          setError(field === "new_password" ? "password" : field, {
             type: "server",
             message: messages[0],
           });

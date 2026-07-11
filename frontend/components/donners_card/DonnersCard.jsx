@@ -13,9 +13,11 @@ import { Button } from "@mui/material";
 const DonnersCard = () => {
   const { data: usersResponse, isLoading } = useGetAllUsersQuery();
 
-  // Handle both array response and paginated response
+  // Handle paginated ({count, results}) and plain array responses
   let users = [];
-  if (Array.isArray(usersResponse)) {
+  if (Array.isArray(usersResponse?.results)) {
+    users = usersResponse.results;
+  } else if (Array.isArray(usersResponse)) {
     users = usersResponse;
   } else if (usersResponse?.data && Array.isArray(usersResponse.data)) {
     users = usersResponse.data;
@@ -50,7 +52,7 @@ const DonnersCard = () => {
               users.slice(0, 8).map((donor) => {
                 const isDonationMoreThan5 = donor.donation_count >= 5;
                 const showBadge = donor.donation_count >= 1;
-                const applyPingAnimation = donor.is_stand_by == 1;
+                const applyPingAnimation = donor.is_donate;
 
                 return (
                   <div
@@ -87,7 +89,7 @@ const DonnersCard = () => {
                         {donor.last_name}
                       </h5>
                       <p className="text-white text-base flex items-center gap-3 my-2">
-                        <FaPhone /> {donor.phone_number}
+                        <FaPhone /> {donor.mobile_number}
                       </p>
                       <p className="text-white text-base flex items-center gap-3">
                         <FaLocationDot /> {donor.bn_upazila},{" "}
@@ -98,7 +100,7 @@ const DonnersCard = () => {
                     {/* phone number:: */}
                     <div className="absolute top-[10px] right-0 gradient-border-wrapper">
                       <Link
-                        href={`tel:+88${donor.phone_number}`}
+                        href={`tel:+88${donor.mobile_number}`}
                         className="group w-[100px] flex items-center gap-2 text-center text-white bg-gradient-to-r from-[#d40606] to-[#020024ab] relative z-20 rounded-l-md text-sm p-1 font-semibold hover:brightness-110 transition shadow-lg"
                       >
                         Call Now

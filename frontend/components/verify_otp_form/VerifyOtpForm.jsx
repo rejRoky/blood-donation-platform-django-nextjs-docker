@@ -26,21 +26,25 @@ const VerifyOtpForm = ({ phoneNumber }) => {
   };
 
   const handleVerify = async () => {
-    if (otp.length !== 4) {
-      setServerError("Please enter a valid 4-digit OTP.");
+    if (otp.length !== 6) {
+      setServerError("Please enter a valid 6-digit OTP.");
       return;
     }
     setServerError("");
     setServerSuccess("");
     try {
       const res = await verifyResetOtp({
-        phone_number: phoneNumber,
-        verification_otp: otp,
+        mobile_number: phoneNumber,
+        otp: otp,
       }).unwrap();
 
-      if (res.success) {
+      if (res.success && res.reset_token) {
         toast.success(res.message || "OTP verified successfully.");
-        router.push(`/reset-password?num=${phoneNumber}&otp=${otp}`);
+        router.push(
+          `/reset-password?num=${phoneNumber}&token=${encodeURIComponent(
+            res.reset_token
+          )}`
+        );
       } else {
         setServerError(res.message || "OTP verification failed.");
       }
@@ -53,9 +57,9 @@ const VerifyOtpForm = ({ phoneNumber }) => {
     setServerError("");
     setServerSuccess("");
     try {
-      const res = await sendResetOtp({ phone_number: phoneNumber }).unwrap();
+      const res = await sendResetOtp({ mobile_number: phoneNumber }).unwrap();
       if (res.success) {
-        serverSuccess(res.message || "OTP sent to your mobile");
+        setServerSuccess(res.message || "OTP sent to your mobile");
       }
       setOtp("");
     } catch (err) {
@@ -74,13 +78,13 @@ const VerifyOtpForm = ({ phoneNumber }) => {
           Verify OTP
         </p>
         <p className="text-gray-500 text-center mb-8">
-          Please enter the 4-digit code sent to your phone
+          Please enter the 6-digit code sent to your phone
         </p>
 
         <MuiOtpInput
           value={otp}
           onChange={handleChange}
-          length={4}
+          length={6}
           sx={{
             gap: "0.4rem",
             "& input": {

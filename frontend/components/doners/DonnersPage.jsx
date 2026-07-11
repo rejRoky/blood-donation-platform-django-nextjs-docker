@@ -32,9 +32,11 @@ export default function DonorsPage() {
   const [selectedUpozilla, setSelectedUpozilla] = useState(null);
   const [districtId, setDistrictId] = useState(null);
 
-  // Build query parameters
+  // Build query parameters — filtering & pagination happen server-side
+  const itemsPerPage = 20;
   const queryParams = {
     page: currentPage,
+    page_size: itemsPerPage,
     ...(selectedBloodGroup && { blood_group: selectedBloodGroup.value }),
     ...(selectedDistrict && { district_id: selectedDistrict.id }),
     ...(selectedUpozilla && { upazila_id: selectedUpozilla.id }),
@@ -47,13 +49,21 @@ export default function DonorsPage() {
   } = useGetAllUsersQuery(queryParams);
   const { data: districtRes = {}, isLoading: districtLoading } =
     useGetDistrictQuery();
-  const districts = Array.isArray(districtRes?.data) ? districtRes.data : [];
+  const districts = Array.isArray(districtRes)
+    ? districtRes
+    : Array.isArray(districtRes?.data)
+      ? districtRes.data
+      : [];
 
   const { data: upozillaRes = {}, isLoading: upozillaLoading } =
     useGetUpozillaQuery(districtId, {
       skip: !districtId,
     });
-  const upozillas = Array.isArray(upozillaRes?.data) ? upozillaRes.data : [];
+  const upozillas = Array.isArray(upozillaRes)
+    ? upozillaRes
+    : Array.isArray(upozillaRes?.data)
+      ? upozillaRes.data
+      : [];
 
   const handleClear = () => {
     setSelectedBloodGroup(null);
@@ -92,55 +102,43 @@ export default function DonorsPage() {
   const isClearButtonVisible =
     selectedBloodGroup || selectedDistrict || selectedUpozilla;
 
-  // Handle both array response and paginated response
+  // Standby donors first, then most donations — within the current page
+  const sortDonors = (list) =>
+    [...list].sort((a, b) => {
+      const standbyA = a.is_donate ? 1 : 0;
+      const standbyB = b.is_donate ? 1 : 0;
+      if (standbyA !== standbyB) {
+        return standbyB - standbyA;
+      }
+      return (b.donation_count || 0) - (a.donation_count || 0);
+    });
+
   let donors = [];
   let totalPages = 1;
   let totalDonors = 0;
   let from = 0;
   let to = 0;
 
-  if (Array.isArray(usersResponse)) {
-    // If backend returns simple array (current case)
-    const allDonors = usersResponse
-      .filter((donor) => donor.is_active == 1)
-      .sort((a, b) => {
-        if (a.is_stand_by !== b.is_stand_by) {
-          return b.is_stand_by - a.is_stand_by;
-        }
-        return b.donation_count - a.donation_count;
-      });
-
-    // Apply frontend filtering if backend doesn't handle it
-    const filteredDonors = allDonors.filter((donor) => {
-      const bloodMatch = selectedBloodGroup
-        ? donor.blood_group == selectedBloodGroup.value
-        : true;
-      const districtMatch = selectedDistrict
-        ? donor.district_id == selectedDistrict.id
-        : true;
-      const upazillaMatch = selectedUpozilla
-        ? donor.upazila_id == selectedUpozilla.id
-        : true;
-      return bloodMatch && districtMatch && upazillaMatch;
-    });
-
-    // Implement frontend pagination
-    const itemsPerPage = 20;
+  if (Array.isArray(usersResponse?.results)) {
+    // Paginated response: {count, next, previous, results}
+    // Filtering already happened server-side via queryParams.
+    donors = sortDonors(usersResponse.results);
+    totalDonors = usersResponse.count || 0;
+    totalPages = Math.max(1, Math.ceil(totalDonors / itemsPerPage));
+    from = totalDonors === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+    to = Math.min(currentPage * itemsPerPage, totalDonors);
+  } else if (Array.isArray(usersResponse)) {
+    // Plain array fallback
+    const filteredDonors = sortDonors(
+      usersResponse.filter((donor) => donor.is_active)
+    );
     totalDonors = filteredDonors.length;
-    totalPages = Math.ceil(totalDonors / itemsPerPage);
-    from = (currentPage - 1) * itemsPerPage + 1;
+    totalPages = Math.max(1, Math.ceil(totalDonors / itemsPerPage));
+    from = totalDonors === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
     to = Math.min(currentPage * itemsPerPage, totalDonors);
 
     const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    donors = filteredDonors.slice(startIndex, endIndex);
-  } else if (usersResponse?.data) {
-    // If backend returns paginated response
-    donors = usersResponse.data;
-    totalPages = usersResponse.last_page || 1;
-    totalDonors = usersResponse.total || 0;
-    from = usersResponse.from || 0;
-    to = usersResponse.to || 0;
+    donors = filteredDonors.slice(startIndex, startIndex + itemsPerPage);
   }
 
   return (
@@ -209,7 +207,7 @@ export default function DonorsPage() {
           {donors?.map((donor) => {
             const isDonationMoreThan5 = donor.donation_count >= 5;
             const showBadge = donor.donation_count >= 1;
-            const applyPingAnimation = donor.is_stand_by == 1;
+            const applyPingAnimation = donor.is_donate;
 
             return (
               <div
@@ -245,7 +243,7 @@ export default function DonorsPage() {
                     {donor.last_name}
                   </h5>
                   <p className="text-white text-base flex items-center gap-3 my-2">
-                    <FaPhone /> {donor.phone_number}
+                    <FaPhone /> {donor.mobile_number}
                   </p>
                   <p className="text-white text-base flex items-center gap-3">
                     <FaLocationDot /> {donor.bn_upazila}, {donor.bn_district}
@@ -255,7 +253,7 @@ export default function DonorsPage() {
                 {/* phone number */}
                 <div className="absolute top-[10px] right-0 gradient-border-wrapper">
                   <Link
-                    href={`tel:+88${donor.phone_number}`}
+                    href={`tel:+88${donor.mobile_number}`}
                     className="group w-[100px] flex items-center gap-2 text-center text-white bg-gradient-to-r from-[#d40606] to-[#020024ab] relative z-20 rounded-l-md text-sm p-1 font-semibold hover:brightness-110 transition shadow-lg"
                   >
                     Call Now

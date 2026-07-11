@@ -10,7 +10,11 @@ export const authOptions = {
       },
       async authorize(credentials, req) {
         try {
-          const response = await apiClient.post("/users/login/", credentials);
+          // Explicit payload: only the fields the API contract defines.
+          const response = await apiClient.post("/users/login/", {
+            mobile_number: credentials?.mobile_number || credentials?.phone_number,
+            password: credentials?.password,
+          });
           if (response.data.user && response.data.token) {
             return {
               ...response.data.user,

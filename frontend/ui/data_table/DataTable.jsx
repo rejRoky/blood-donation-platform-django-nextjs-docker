@@ -54,13 +54,13 @@ export default function DataTable({ isLoading, donationHistory }) {
       renderCell: (params) => params.api.getAllRowIds().indexOf(params.id) + 1,
     },
     {
-      field: "last_donation_date",
+      field: "donation_date",
       headerName: "Donation Date",
       width: 250,
       headerClassName: "bg-red-50 text-base font-bold text-slate-800",
     },
     {
-      field: "blood_amount",
+      field: "amount",
       headerName: "Donated Blood (ML)",
       width: 206,
       headerClassName: "bg-red-50 text-base font-bold text-slate-800",

@@ -20,7 +20,12 @@ if OTP_DEBUG_EXPOSE:
     raise ImproperlyConfigured("OTP_DEBUG_EXPOSE must be disabled in production.")
 
 # Security Headers - HTTPS enforcement
-SECURE_SSL_REDIRECT = True
+# Configurable so HTTP-only deployments (TLS terminated upstream, or an
+# internal network) can opt out. Default stays secure.
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
+# Health probes arrive over plain HTTP from Docker/K8s/load balancers —
+# redirecting them to https marks every container permanently unhealthy.
+SECURE_REDIRECT_EXEMPT = [r'^health/']
 SECURE_HSTS_SECONDS = 31536000  # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True

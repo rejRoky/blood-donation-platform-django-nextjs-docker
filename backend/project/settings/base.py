@@ -16,6 +16,13 @@ SECRET_KEY = config('SECRET_KEY', default='INSECURE-CHANGE-ME')
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
+# Internal hostnames: container healthchecks hit localhost, and the Next.js
+# server calls the API as http://backend:8000 over the Docker network.
+# ALLOWED_HOSTS from the environment only needs the public domain(s).
+for _internal_host in ('backend', 'localhost', '127.0.0.1'):
+    if _internal_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_internal_host)
+
 # Application definition
 INSTALLED_APPS = [
     "django.contrib.admin",

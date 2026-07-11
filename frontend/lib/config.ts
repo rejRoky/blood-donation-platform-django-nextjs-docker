@@ -11,8 +11,7 @@ export const SITE = {
 } as const;
 
 /** Base URL for API calls made from the browser (same origin through nginx). */
-export const CLIENT_API_BASE =
-  `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/v1`;
+export const CLIENT_API_BASE = "/api/v1";
 
 /** Base URL for API calls made from the Next.js server (inside Docker network). */
 export const SERVER_API_BASE =

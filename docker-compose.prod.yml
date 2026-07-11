@@ -49,11 +49,15 @@ services:
       - TZ=${TZ:-Asia/Dhaka}
 
   frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # Standalone Next.js server; browser API calls are same-origin via nginx
+      target: runner
     # No source mount in production — the image is the artifact.
     volumes: []
     ports: []
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
       - INTERNAL_API_URL=http://backend:8000
       - NEXTAUTH_URL=${NEXTAUTH_URL:?NEXTAUTH_URL is required}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}

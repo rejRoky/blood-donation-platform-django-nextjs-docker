@@ -90,6 +90,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: dev
     container_name: blood_donation_frontend
     volumes:
       - ./frontend:/app

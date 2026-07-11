@@ -79,6 +79,9 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-cache@123}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://localhost:3000}
       - OTP_DEBUG_EXPOSE=${OTP_DEBUG_EXPOSE:-False}
+      # Optional: auto-create the initial admin account on boot
+      - DJANGO_SUPERUSER_MOBILE_NUMBER=${DJANGO_SUPERUSER_MOBILE_NUMBER:-}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-}
       - TZ=${TZ:-Asia/Dhaka}
     restart: unless-stopped
     healthcheck:

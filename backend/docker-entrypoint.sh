@@ -26,6 +26,12 @@ echo "Seeding geographic data..."
 # Idempotent — updates existing rows, so safe on every boot
 python manage.py seed_areas
 
+# Optional: create the initial admin account from the environment
+if [ -n "$DJANGO_SUPERUSER_MOBILE_NUMBER" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
+  echo "Ensuring superuser exists..."
+  python manage.py createsuperuser --noinput 2>/dev/null || true
+fi
+
 echo "Collecting static files..."
 python manage.py collectstatic --noinput --clear
 

@@ -22,6 +22,10 @@ echo "Running database migrations..."
 python manage.py makemigrations users sitesetting --noinput
 python manage.py migrate --noinput
 
+echo "Seeding geographic data..."
+# Idempotent — updates existing rows, so safe on every boot
+python manage.py seed_areas
+
 echo "Collecting static files..."
 python manage.py collectstatic --noinput --clear
 

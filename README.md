@@ -58,19 +58,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Database migrations are generated and applied automatically by the backend
-container on startup (migration files are intentionally not tracked in git).
-
-### 3. Seed Geographic Data (first run)
-```bash
-docker compose exec backend python manage.py seed_areas
-```
-
-Loads the bundled dataset of 64 districts and 494 upazilas (idempotent —
-safe to re-run). Registration and donor search need this data. Source:
+On startup the backend container automatically applies database migrations
+(migration files are intentionally not tracked in git) and seeds the bundled
+geographic dataset — 64 districts and 494 upazilas from
 [nuhil/bangladesh-geocode](https://github.com/nuhil/bangladesh-geocode) (MIT).
+No manual seeding step is needed; `python manage.py seed_areas` re-syncs on
+demand.
 
-### 4. Access
+### 3. Access
 | Service | URL |
 |---------|-----|
 | App (via nginx) | http://localhost |
@@ -83,7 +78,7 @@ safe to re-run). Registration and donor search need this data. Source:
 
 In development, DB/Redis/backend/frontend ports are bound to `127.0.0.1` only.
 
-### 5. Create Superuser (Optional)
+### 4. Create Superuser (Optional)
 ```bash
 docker compose exec backend python manage.py createsuperuser
 ```
@@ -98,8 +93,9 @@ and `project.settings.production` fails fast on an insecure `SECRET_KEY`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-docker compose exec backend python manage.py seed_areas   # first deploy
 ```
+
+Migrations and geographic data seeding run automatically on container start.
 
 Static and media files are served by nginx directly from shared volumes
 (WhiteNoise as fallback). Terminate TLS at the nginx container (mount

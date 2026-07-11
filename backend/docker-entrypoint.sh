@@ -18,6 +18,8 @@ if [ -n "$REDIS_HOST" ]; then
 fi
 
 echo "Running database migrations..."
+# Migration files are not tracked in git — generate them if missing
+python manage.py makemigrations users sitesetting --noinput
 python manage.py migrate --noinput
 
 echo "Collecting static files..."

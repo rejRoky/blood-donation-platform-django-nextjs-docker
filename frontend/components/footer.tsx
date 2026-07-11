@@ -6,10 +6,10 @@ import type { Paginated, SiteSetting } from "@/lib/types";
 
 async function getSiteSettings(): Promise<SiteSetting | null> {
   try {
-    const data = await serverApi<Paginated<SiteSetting>>("/site-settings/", {
+    const data = await serverApi<SiteSetting[] | Paginated<SiteSetting>>("/site-settings/", {
       next: { revalidate: 300 },
     });
-    return data.results?.[0] ?? null;
+    return (Array.isArray(data) ? data[0] : data.results?.[0]) ?? null;
   } catch {
     return null; // footer must render even if the API is briefly down
   }

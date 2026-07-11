@@ -33,6 +33,7 @@ export function RegisterForm() {
     handleSubmit,
     watch,
     setError,
+    resetField,
     formState: { errors, isSubmitting },
   } = useForm<RegisterInput>({ resolver: zodResolver(registerSchema) });
 
@@ -127,7 +128,10 @@ export function RegisterForm() {
         <AreaSelect
           required
           districtValue={districtValue}
-          districtProps={register("district")}
+          districtProps={register("district", {
+            // District changed — the previously selected upazila no longer applies
+            onChange: () => resetField("upazila"),
+          })}
           upazilaProps={register("upazila")}
           districtError={errors.district?.message}
           upazilaError={errors.upazila?.message}

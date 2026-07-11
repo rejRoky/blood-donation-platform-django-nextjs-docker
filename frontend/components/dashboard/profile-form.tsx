@@ -28,6 +28,7 @@ export function ProfileForm() {
     handleSubmit,
     watch,
     reset,
+    setValue,
     setError,
     formState: { errors, isDirty },
   } = useForm<ProfileInput>({ resolver: zodResolver(profileSchema) });
@@ -126,7 +127,11 @@ export function ProfileForm() {
           <AreaSelect
             required
             districtValue={districtValue}
-            districtProps={register("district_id")}
+            districtProps={register("district_id", {
+              // District changed — the previously selected upazila no longer applies
+              // ("" renders the placeholder; zod coercion rejects it if submitted)
+              onChange: () => setValue("upazila_id", "" as unknown as number, { shouldDirty: true }),
+            })}
             upazilaProps={register("upazila_id")}
             districtError={errors.district_id?.message}
             upazilaError={errors.upazila_id?.message}

@@ -1,6 +1,9 @@
 """
 Seed Bangladesh districts and upazilas from the bundled JSON data files.
 
+Data source: https://github.com/nuhil/bangladesh-geocode (MIT License).
+See users/data/README.md for the re-sync procedure.
+
 Idempotent: existing rows are updated in place, so it is safe to run on
 every deployment.
 

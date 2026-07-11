@@ -67,7 +67,8 @@ docker compose exec backend python manage.py seed_areas
 ```
 
 Loads the bundled dataset of 64 districts and 494 upazilas (idempotent —
-safe to re-run). Registration and donor search need this data.
+safe to re-run). Registration and donor search need this data. Source:
+[nuhil/bangladesh-geocode](https://github.com/nuhil/bangladesh-geocode) (MIT).
 
 ### 4. Access
 | Service | URL |

@@ -1,3 +1,5 @@
+# Development compose file. For production use:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 services:
   db:
     image: postgres:16-alpine
@@ -12,7 +14,9 @@ services:
     networks:
       - blood_donation_network
     ports:
-      - "5432:5432"
+      # Bound to loopback: reachable from the host for local tooling,
+      # never exposed to the network.
+      - "127.0.0.1:5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
@@ -27,14 +31,14 @@ services:
     environment:
       - TZ=${TZ:-Asia/Dhaka}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - blood_donation_network
     volumes:
       - redis_data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-cache@123}\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,10 +53,8 @@ services:
       - static_volume:/code/staticfiles
       - media_volume:/code/media
       - logs_volume:/code/logs
-    expose:
-      - "8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +76,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-cache@123}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://localhost:3000}
+      - OTP_DEBUG_EXPOSE=${OTP_DEBUG_EXPOSE:-False}
       - TZ=${TZ:-Asia/Dhaka}
     restart: unless-stopped
     healthcheck:
@@ -92,13 +95,14 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
     networks:
       - blood_donation_network
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost/api}
+      # Origin only — the frontend appends /api itself
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost}
       - INTERNAL_API_URL=http://backend:8000
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-nextauth-key-change-in-production}
@@ -114,15 +118,15 @@ services:
       - backend
       - frontend
     volumes:
-      - static_volume:/code/staticfiles:ro
-      - media_volume:/code/media:ro
+      - static_volume:/var/www/static:ro
+      - media_volume:/var/www/media:ro
     environment:
       - TZ=${TZ:-Asia/Dhaka}
     networks:
       - blood_donation_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health/live/"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/health/live/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

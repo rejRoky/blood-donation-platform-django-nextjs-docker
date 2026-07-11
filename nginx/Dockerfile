@@ -1,13 +1,10 @@
-# nginx/Dockerfile
-
-# Use the official Nginx image from the Docker Hub as a base image
-FROM nginx:latest
+# Pinned version instead of :latest so deployments are reproducible
+FROM nginx:1.28-alpine
 
 # Remove default configuration
 RUN rm /etc/nginx/conf.d/default.conf
 
-# Copy your custom Nginx configuration file into the container
+# Copy custom Nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Expose port 80
 EXPOSE 80

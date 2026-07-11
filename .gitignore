@@ -21,11 +21,13 @@ __pycache__/
 *.so
 .Python
 env/
+venv/
 develop-eggs/
 downloads/
 eggs/
-lib/
-lib64/
+# Rooted: python build dirs only — must not swallow frontend/lib
+/lib/
+/lib64/
 parts/
 sdist/
 var/

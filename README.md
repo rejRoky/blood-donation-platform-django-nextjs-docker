@@ -3,7 +3,7 @@
 A full-stack blood donation management system with a Django REST API backend and Next.js frontend.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Django](https://img.shields.io/badge/Django-5.0-green.svg)](https://www.djangoproject.com/)
+[![Django](https://img.shields.io/badge/Django-5.2%20LTS-green.svg)](https://www.djangoproject.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
@@ -12,12 +12,12 @@ A full-stack blood donation management system with a Django REST API backend and
 ## ✨ Features
 
 - 🔐 Mobile number authentication (Bangladesh format: `01XXXXXXXXX`)
-- 🔑 JWT access/refresh tokens with blacklisting on logout
+- 🔑 JWT access/refresh tokens with blacklisting on logout & password reset
 - 🩸 Donation tracking with 120-day interval enforcement
-- 🔑 OTP-based password reset (via Redis cache)
+- 🔑 OTP-based password reset (single-use reset token, attempt limiting)
 - 📍 Bangladesh geographic data — Districts & Upazilas
 - 👥 Role-based users: Admin, Manager, Donor
-- 🔍 Donor search by blood group, district, upazila
+- 🔍 Donor directory with server-side filtering & pagination
 - ⚙️ Site settings management
 - 💓 Health check endpoints (liveness, readiness, status)
 
@@ -26,19 +26,19 @@ A full-stack blood donation management system with a Django REST API backend and
 ## 🛠️ Tech Stack
 
 ### Backend
-- Python 3.12, Django 5.0, Django REST Framework 3.15
+- Python 3.12, Django 5.2 LTS, Django REST Framework 3.17
 - PostgreSQL 16, Redis 7
-- djangorestframework-simplejwt, drf-yasg, django-ckeditor
-- Gunicorn, Nginx
+- djangorestframework-simplejwt, drf-yasg
+- Gunicorn, Nginx, WhiteNoise
 
 ### Frontend
 - Next.js 15, React 18
-- Redux Toolkit, NextAuth, Axios
+- Redux Toolkit (RTK Query), NextAuth, Axios
 - MUI, Tailwind CSS, React Hook Form
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Development)
 
 ### Prerequisites
 - Docker 20.10+ and Docker Compose 2.0+
@@ -53,23 +53,46 @@ cp .env.example .env
 
 ### 2. Start All Services
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 ### 3. Access
 | Service | URL |
 |---------|-----|
-| Frontend | http://localhost:3000 |
-| Backend API | http://localhost:8000 |
+| App (via nginx) | http://localhost |
+| Frontend (direct) | http://localhost:3000 |
+| Backend API (direct) | http://localhost:8000 |
 | Admin Panel | http://localhost:8000/admin/ |
 | Swagger UI | http://localhost:8000/doc/ |
 | ReDoc | http://localhost:8000/redoc/ |
 | Health Check | http://localhost:8000/health/ready/ |
 
+In development, DB/Redis/backend/frontend ports are bound to `127.0.0.1` only.
+
 ### 4. Create Superuser (Optional)
 ```bash
-docker-compose exec backend python manage.py createsuperuser
+docker compose exec backend python manage.py createsuperuser
 ```
+
+---
+
+## 🏭 Production Deployment
+
+Production uses an overlay file — no source mounts, no published DB/Redis
+ports, secrets are **required** (the stack refuses to start without them),
+and `project.settings.production` fails fast on an insecure `SECRET_KEY`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Static and media files are served by nginx directly from shared volumes
+(WhiteNoise as fallback). Terminate TLS at the nginx container (mount
+certificates) or at an upstream load balancer/CDN.
+
+**SMS gateway:** the OTP flow logs messages until a provider is wired into
+`backend/users/services.py` (`send_sms`). Do not enable `OTP_DEBUG_EXPOSE`
+in production — production settings refuse to start with it on.
 
 ---
 
@@ -78,121 +101,123 @@ docker-compose exec backend python manage.py createsuperuser
 ```
 blood-donation-backend-django/
 ├── backend/
-│   ├── project/                  # Django project settings & URLs
-│   │   └── settings/             # base / development / staging / production
+│   ├── project/                  # Django project
+│   │   ├── settings/             # base / development / staging / production / test
+│   │   ├── exceptions.py         # standardized API error envelope
+│   │   ├── pagination.py         # standard page-number pagination
+│   │   └── health.py             # liveness / readiness probes
 │   ├── users/                    # Auth, users, donations, geographic data
+│   │   ├── services.py           # OTP + SMS gateway integration point
+│   │   └── tests.py              # API test suite
 │   ├── sitesetting/              # Site configuration app
 │   ├── requirements/             # base / dev / production
 │   ├── Dockerfile
-│   ├── gunicorn_config.py
-│   └── manage.py
+│   └── gunicorn_config.py
 ├── frontend/                     # Next.js application
-├── nginx/                        # Nginx reverse proxy config
-├── redis/                        # Redis config
-├── docker-compose.yml
+├── nginx/                        # Reverse proxy: static, gzip, rate limiting
+├── docker-compose.yml            # Development
+├── docker-compose.prod.yml       # Production overlay
 └── .env.example
 ```
 
 ---
 
-## 📚 API Endpoints
+## 📚 API
+
+All endpoints are mounted at **`/api/v1/`** (canonical) and `/api/`
+(legacy alias). Authenticate with `Authorization: Bearer <access_token>`.
+
+### Error envelope
+
+Every error response has one consistent shape:
+
+```json
+{
+  "success": false,
+  "message": "Human-readable summary",
+  "errors": { "field_name": ["What is wrong"] },
+  "code": "validation_error",
+  "status_code": 400
+}
+```
 
 ### Authentication
-| Method | Endpoint | Auth |
-|--------|----------|------|
-| POST | `/api/users/register/` | No |
-| POST | `/api/users/login/` | No |
-| POST | `/api/users/logout/` | Yes |
-| POST | `/api/users/token/refresh/` | No |
+| Method | Endpoint | Auth | Throttle |
+|--------|----------|------|----------|
+| POST | `/api/v1/users/register/` | No | 20/hour |
+| POST | `/api/v1/users/login/` | No | 10/min |
+| POST | `/api/v1/users/logout/` | Yes | — |
+| POST | `/api/v1/users/token/refresh/` | No | — |
 
 ### Password Reset (OTP)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/users/send-reset-password-otp/` | Send OTP to mobile |
-| POST | `/api/users/verify-reset-password-otp/` | Verify OTP |
-| POST | `/api/users/reset-password/` | Set new password |
+| Method | Endpoint | Body |
+|--------|----------|------|
+| POST | `/api/v1/users/send-reset-password-otp/` | `{mobile_number}` — always responds 200 (no account enumeration) |
+| POST | `/api/v1/users/verify-reset-password-otp/` | `{mobile_number, otp}` → returns single-use `reset_token` |
+| POST | `/api/v1/users/reset-password/` | `{mobile_number, reset_token, new_password}` — revokes all sessions |
 
 ### Users
 | Method | Endpoint | Auth |
 |--------|----------|------|
-| GET/PUT | `/api/users/profile/` | Yes |
-| GET | `/api/users/` | Yes — supports `?blood_group=&district_id=&upazila_id=` |
-| GET | `/api/users/<uuid>/` | Yes |
-| POST | `/api/users/is_donate_first/` | Yes |
-| POST | `/api/users/is_active/` | Yes |
+| GET/PUT | `/api/v1/users/profile/` | Yes |
+| GET | `/api/v1/users/` | Yes — donor directory: `?blood_group=&district_id=&upazila_id=&page=&page_size=` |
+| GET | `/api/v1/users/<uuid>/` | Yes |
+| POST | `/api/v1/users/is_donate_first/` | Yes |
+| POST | `/api/v1/users/is_active/` | Yes — toggles donor availability |
 
 ### Donations
-| Method | Endpoint | Auth |
-|--------|----------|------|
-| POST/GET/DELETE | `/api/users/donate/` | Yes |
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| POST | `/api/v1/users/donate/` | `{date, amount, note?}` — 120-day rule enforced |
+| GET | `/api/v1/users/donate/` | Own donations only |
+| DELETE | `/api/v1/users/donate/` | `{donation_id}` — own donations only |
 
 ### Geographic Data
 | Method | Endpoint | Auth |
 |--------|----------|------|
-| GET | `/api/area/district/` | No |
-| POST | `/api/area/upazila/` | No — body: `{ "district_id": int }` |
+| GET | `/api/v1/area/district/` | No |
+| GET | `/api/v1/area/upazila/?district_id=<id>` | No |
+| POST | `/api/v1/area/upazila/` | No — legacy body variant |
 
 ### Site Settings
 | Method | Endpoint | Auth |
 |--------|----------|------|
-| GET | `/api/site-settings/` | No |
-| GET | `/api/site-settings/<id>/` | No |
-| GET | `/api/site-settings/footer-logo/` | No |
+| GET | `/api/v1/site-settings/` | No |
+| GET | `/api/v1/site-settings/<id>/` | No |
+| GET | `/api/v1/site-settings/footer-logo/` | No |
 
 ### Health Checks
 | Endpoint | Description |
 |----------|-------------|
 | `/health/live/` | Liveness probe |
-| `/health/ready/` | Readiness probe |
-| `/health/status/` | Detailed system info |
-
----
-
-## ⚙️ Environment Variables
-
-```bash
-# Django
-SECRET_KEY=your-secret-key
-DEBUG=False
-DJANGO_SETTINGS_MODULE=project.settings.production
-ALLOWED_HOSTS=yourdomain.com
-
-# Database
-POSTGRES_DB=blood_donation_db
-POSTGRES_USER=your_db_user
-POSTGRES_PASSWORD=your_secure_password
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-
-# Redis
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your_redis_password
-
-# CORS
-CORS_ALLOWED_ORIGINS=https://yourdomain.com
-
-# Frontend (Next.js)
-NEXT_PUBLIC_API_URL=https://yourdomain.com/api
-NEXTAUTH_URL=https://yourdomain.com
-NEXTAUTH_SECRET=your-nextauth-secret
-
-# Optional
-SENTRY_DSN=your_sentry_dsn
-TZ=Asia/Dhaka
-```
-
-See [.env.example](.env.example) for all options.
+| `/health/ready/` | Readiness probe (DB + Redis) |
+| `/health/status/` | App version (runtime details for staff only) |
 
 ---
 
 ## 🔒 Security
 
-- Password requirements: min 8 chars, uppercase, lowercase, digit, special char (`@#$%^&*()-+=`)
-- Mobile number: exactly 11 digits, starts with `01`
-- JWT token blacklisting on logout
-- OTP-based password reset (5-minute expiry via Redis)
-- CORS whitelisting, HTTPS enforcement in production
+- Password requirements: min 8 chars, uppercase, lowercase, digit, special char
+- JWT refresh-token blacklisting on logout **and** on password reset
+- OTP reset flow: OTP never returned by the API, max 5 verify attempts,
+  single-use reset token, generic responses prevent account enumeration
+- Login: single generic error for wrong password / unknown / inactive accounts
+- Registration cannot set roles or staff flags
+- Donation records can only be deleted by their owner
+- Rate limiting at both nginx (edge) and DRF (per-user/scope) levels
+- Secure-by-default DRF: every endpoint requires auth unless explicitly public
+- `python manage.py check --deploy` passes clean in production settings
+
+---
+
+## 🧪 Tests
+
+```bash
+cd backend
+python manage.py test users --settings=project.settings.test
+```
+
+The test settings use SQLite + local-memory cache, so no services are needed.
 
 ---
 
@@ -213,18 +238,6 @@ cd frontend
 npm install
 npm run dev
 ```
-
----
-
-## 🐳 Docker Services
-
-| Service | Image | Port |
-|---------|-------|------|
-| `db` | postgres:16-alpine | 5432 |
-| `redis` | redis:7-alpine | 6379 |
-| `backend` | Custom (Gunicorn) | 8000 |
-| `frontend` | Custom (Next.js) | 3000 |
-| `nginx` | Custom (Nginx) | 80 |
 
 ---
 

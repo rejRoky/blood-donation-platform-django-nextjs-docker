@@ -70,7 +70,10 @@ db.sqlite3
 
 
 ### Migration ###
-# 000*.py
+# Django migration files are generated per environment and never committed.
+# __init__.py is kept so the migrations package exists on fresh clones.
+backend/**/migrations/*.py
+!backend/**/migrations/__init__.py
 
 
 ### Frontend (Next.js) ###

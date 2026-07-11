@@ -8,7 +8,7 @@ class FooterMultipleLogo(models.Model):
     footer_logo_status = models.BooleanField(default=True)
 
     def __str__(self):
-        return
+        return f'Footer logo #{self.pk}'
 
 
 class SiteSetting(models.Model):
@@ -30,4 +30,4 @@ class SiteSetting(models.Model):
     site_status = models.BooleanField(default=True)
 
     def __str__(self):
-        return self.site_name
+        return self.site_name or f'Site setting #{self.pk}'

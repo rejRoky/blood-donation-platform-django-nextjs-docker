@@ -10,6 +10,7 @@ class SiteSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = SiteSetting
         fields = [
+            'id',
             'site_name', 'site_logo', 'site_favicon', 'site_title', 'site_footer_logo',
             'site_email', 'site_phone', 'site_address',
             'site_facebook', 'site_linkedin', 'site_youtube', 'site_whatsapp', 'site_map',

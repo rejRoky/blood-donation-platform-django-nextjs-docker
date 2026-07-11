@@ -33,9 +33,10 @@ A full-stack blood donation management system with a Django REST API backend and
 - Gunicorn, Nginx, WhiteNoise
 
 ### Frontend
-- Next.js 15, React 18
-- Redux Toolkit (RTK Query), NextAuth, Axios
-- MUI, Tailwind CSS, React Hook Form
+- Next.js 15 (App Router) + React 19, TypeScript
+- TanStack Query, NextAuth (JWT with refresh rotation)
+- Tailwind CSS 4, React Hook Form + Zod, sonner, lucide-react
+- Standalone output in a non-root multi-stage Docker image
 
 ---
 
@@ -117,7 +118,11 @@ blood-donation-backend-django/
 │   ├── requirements/             # base / dev / production
 │   ├── Dockerfile
 │   └── gunicorn_config.py
-├── frontend/                     # Next.js application
+├── frontend/                     # Next.js 15 App Router (TypeScript)
+│   ├── app/                      # Routes: home, donors, dashboard, auth, about, terms
+│   ├── components/               # UI primitives + feature components
+│   ├── lib/                      # API client, auth, hooks, validation
+│   └── Dockerfile                # dev + standalone production targets
 ├── nginx/                        # Reverse proxy: static, gzip, rate limiting
 ├── docker-compose.yml            # Development
 ├── docker-compose.prod.yml       # Production overlay
